@@ -27,8 +27,9 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 1. **Visual mapping construction** — users build transforms by interacting with source/target data trees
 2. **Live output preview** — every change to the mapping updates the output in real time
 3. **Guided wizard mode** — step-by-step UX for users who prefer being led through the process
-4. **Free-form editing mode** — power users can edit the mapping JSON directly
-5. **Zero-server deployment** — runs as a static HTML file opened locally or hosted anywhere
+4. **Free-form editing mode** — power users can edit the mapping JSON or JS directly
+5. **Compute function support** — generate `.js` mappings with custom compute functions for arbitrary transformations
+6. **Zero-server deployment** — runs as a static HTML file opened locally or hosted anywhere
 
 ### 2.2 Secondary Goals
 6. **Schema-awareness** — import JSON Schema and enforce type/cardinality constraints
@@ -40,7 +41,6 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 ---
 
 ## 3. Non-Goals (v1)
-- Compute functions (arbitrary JS) — these are a `.js`-only feature; the web app generates `.json` mappings
 - Streaming/large-file support — the web app loads data into memory
 - Multi-user collaboration — single-user tool
 - i18n/l10n — English-only for v1
@@ -120,6 +120,11 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 | FR-313 | Support dictionary/file lookups | Could | Upload reference data |
 | FR-314 | Undo/redo for mapping changes | Should | Command stack |
 | FR-315 | Mapping validation — flag unmapped required fields, invalid paths | Must | Real-time error indicators |
+| FR-316 | Support compute functions (arithmetic, string manipulation, custom logic) | Must | Function builder UI |
+| FR-317 | Compute function templates (concatenate fields, arithmetic operations, date math) | Must | Pre-built templates |
+| FR-318 | Custom compute function editor (free-form JS expression) | Should | For advanced users |
+| FR-319 | Compute function parameter hints (available fields, types) | Should | IntelliSense for function params |
+| FR-320 | Compute function validation (syntax check, type safety warnings) | Should | Prevent runtime errors |
 
 **Translation from XSLT tools:** This is the core "visual mapping" feature found in oXygen, XMLSpy, and Stylus Studio. Users draw connections between source and target nodes; the tool generates the transform definition.
 
@@ -167,11 +172,13 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | FR-600 | JSON editor for direct mapping editing | Must | Syntax-highlighted textarea or JSON editor |
-| FR-601 | Syntax validation with error highlighting | Must | Real-time JSON parse errors |
-| FR-602 | Semantic validation (undefined fields, invalid options) | Should | |
-| FR-603 | Switch between visual mapping and JSON editor | Must | Two views of the same mapping |
-| FR-604 | Auto-format/prettify JSON | Should | |
-| FR-605 | IntelliSense/autocomplete for field names and options | Could | Dropdown suggestions |
+| FR-601 | JS editor for mappings with compute functions | Must | Syntax-highlighted code editor |
+| FR-602 | Syntax validation with error highlighting | Must | Real-time JSON/JS parse errors |
+| FR-603 | Semantic validation (undefined fields, invalid options) | Should | |
+| FR-604 | Switch between visual mapping and JSON/JS editor | Must | Three views: visual, JSON, JS |
+| FR-605 | Auto-format/prettify JSON/JS | Should | |
+| FR-606 | IntelliSense/autocomplete for field names and options | Could | Dropdown suggestions |
+| FR-607 | Compute function inline editing with live preview | Must | Edit function body, see immediate results |
 
 **Translation from XSLT tools:** XSLT editors provide both visual and code views. FR-600–FR-605 allow power users to edit the mapping JSON directly.
 
@@ -256,10 +263,12 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| TR-300 | No `eval()` or `new Function()` in browser code | Must | Compute functions excluded |
+| TR-300 | Sandbox compute functions (restricted execution context) | Must | No access to DOM, network, or global state |
 | TR-301 | Sanitize file inputs (validate JSON before parsing) | Must | |
 | TR-302 | No network requests (all local processing) | Must | |
 | TR-303 | CSP-compatible (no inline scripts if possible) | Should | |
+| TR-304 | Compute function timeout protection | Should | Prevent infinite loops |
+| TR-305 | Warning dialog when loading mappings with compute functions | Must | Informed consent |
 
 ---
 
@@ -285,13 +294,14 @@ The web app must generate mapping definitions compatible with the existing json-
       "aggregate": "sum" | "avg" | "min" | "max" | "count" | "distinct",
       "template": "Hello ${name} from ${city}",
       "dictionary": { /* dict lookup config */ },
-      "conditions": [ /* include/exclude rules */ ]
+      "conditions": [ /* include/exclude rules */ ],
+      "compute": function(a, b) { return a + b; } // JS-only feature
     }
   ]
 }
 ```
 
-The web app must support all features except `compute` (which requires `.js` execution).
+The web app must support all features including `compute`. When compute functions are present, the app exports `.js` mappings with `export default`. Pure declarative mappings (no compute) can be exported as either `.json` or `.js`.
 
 ---
 
@@ -338,7 +348,6 @@ The web app must support all features except `compute` (which requires `.js` exe
 
 ## 8. Out of Scope for v1
 
-- Compute functions (require JS execution in browser — security risk)
 - Streaming/large-file processing
 - Real-time collaboration
 - Plugin/extension system
@@ -366,16 +375,24 @@ The web app must support all features except `compute` (which requires `.js` exe
 
 7. **Sample datasets:** Should the app ship with bundled sample data for demos/tutorial?
 
+8. **Compute function sandboxing:** How to safely execute user-defined JS in the browser? Options: Web Worker isolation, restricted `new Function()` with parameter validation, or a custom expression evaluator.
+
+9. **Compute function editor UX:** Should we provide a template picker for common operations (arithmetic, string concat, date math) plus a free-form editor for advanced users?
+
+10. **Export format decision:** When should the app default to `.json` vs `.js` export? Should it auto-detect based on whether compute functions are present?
+
 ---
 
 ## 10. Success Criteria
 
 - [ ] User can load a JSON file, create a mapping via wizard, preview output, and export the mapping — all without leaving the browser
-- [ ] User can load an existing mapping, edit it visually or as JSON, and see live preview updates
+- [ ] User can create compute functions (templates or custom) and see them work in live preview
+- [ ] User can load an existing mapping (`.json` or `.js`), edit it visually or as code, and see live preview updates
 - [ ] Generated mappings are 100% compatible with the CLI `transform.js` engine
 - [ ] App loads and runs with zero server setup (open `index.html` in browser)
 - [ ] All Must-priority requirements implemented
 - [ ] No runtime errors in Chrome, Firefox, or Safari
+- [ ] Compute functions execute safely without access to DOM, network, or global state
 
 ---
 
@@ -386,15 +403,15 @@ The web app must support all features except `compute` (which requires `.js` exe
 | Data Loading | 4 | 1 | 2 | 0 |
 | Source Tree | 4 | 3 | 0 | 0 |
 | Target Schema | 3 | 2 | 2 | 0 |
-| Visual Mapping | 6 | 4 | 4 | 0 |
+| Visual Mapping | 8 | 7 | 4 | 0 |
 | Wizard Mode | 7 | 2 | 0 | 0 |
 | Live Preview | 3 | 3 | 2 | 0 |
-| Free-Form Editor | 3 | 2 | 1 | 0 |
+| Free-Form Editor | 5 | 3 | 1 | 0 |
 | Export/Import | 4 | 1 | 1 | 0 |
 | Schema Integration | 0 | 0 | 4 | 0 |
 | UI/UX | 4 | 3 | 2 | 0 |
-| Technical | 7 | 2 | 2 | 0 |
-| **Total** | **45** | **20** | **18** | **0** |
+| Technical | 9 | 4 | 2 | 0 |
+| **Total** | **51** | **29** | **20** | **0** |
 
 ---
 

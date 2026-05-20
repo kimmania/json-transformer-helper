@@ -1,6 +1,6 @@
 # Requirements: json-transformer Web Transform Assistant
 
-> **Status:** Draft v0.1 — May 2026
+> **Status:** Draft v0.2 — May 2026 (Open Questions resolved)
 > **Author:** Hermes Agent + User collaboration
 > **Target:** Standalone static web app (no server required)
 > **Branch:** `transform-assistant`
@@ -42,6 +42,8 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 
 ## 3. Non-Goals (v1)
 - Streaming/large-file support — the web app loads data into memory
+- CSV support — deferred to v2; JSON-only for v1 (FR-002 demoted)
+- JSON Schema integration — deferred to v2; all FR-800–803 items are "Could" priority
 - Multi-user collaboration — single-user tool
 - i18n/l10n — English-only for v1
 - Mobile-responsive design — desktop-first
@@ -55,13 +57,14 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | FR-001 | Load source JSON data via file picker | Must | `.json` files only (v1) |
-| FR-002 | Load source CSV data via file picker | Should | Parse to JSON internally |
+| FR-002 | Load source CSV data via file picker | Won't | Deferred to v2; JSON-only for v1 |
 | FR-003 | Load target/expected output for comparison | Could | Optional reference |
 | FR-004 | Load JSON Schema for source data | Could | `.json` schema files |
 | FR-005 | Auto-inspect loaded data (type detection, null rates, distinct values) | Must | Reuse `inspect()` logic from CLI |
 | FR-006 | Display inspection results in a summary panel | Must | Field names, types, sample values, stats |
 | FR-007 | Support loading multiple source files (merge datasets) | Could | Match CLI `--data` repeat behavior |
 | FR-008 | Sample data browser — navigate to any record/field | Must | Click-to-navigate tree |
+| FR-009 | Ship with 2-3 bundled sample datasets (nested objects, arrays) | Should | Embedded as JS constants, <5KB total; lets new users try immediately |
 
 **Translation from XSLT tools:** XSLT editors bind to source XML + XSD and show a tree view with type annotations. FR-005/FR-006/FR-008 replicate this for JSON.
 
@@ -104,7 +107,7 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| FR-300 | Map source field → target field by clicking source then target | Must | Click-to-link or drag-and-drop |
+| FR-300 | Map source field → target field via table-based editor | Must | Each row = target field with source path input; click-to-link in tree as secondary mode |
 | FR-301 | Show active mappings as visual connections (lines, highlights, or a mapping table) | Must | |
 | FR-302 | Edit mapping properties per field (format, map, coalesce, conditions) | Must | Side panel or inline editor |
 | FR-303 | Support passthrough toggle (include unmapped source fields) | Must | Global setting |
@@ -188,11 +191,11 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| FR-700 | Export mapping as `.json` file | Must | Download via browser |
-| FR-701 | Export mapping as `.js` file (with `export default`) | Must | |
+| FR-700 | Export mapping as `.json` file (pure declarative mappings) | Must | Download via browser |
+| FR-701 | Export mapping as `.js` file (with `export default`) | Must | Auto-selected when compute functions present |
 | FR-702 | Copy mapping to clipboard | Must | |
-| FR-703 | Import existing mapping file | Must | File picker |
-| FR-704 | Save mapping to localStorage (auto-save draft) | Should | Persist across page reloads |
+| FR-703 | Import existing mapping file | Must | File picker; auto-detects `.json` vs `.js` |
+| FR-704 | Save mapping to localStorage (opt-in, auto-save draft) | Should | User must opt-in on first load; "Clear saved data" button visible |
 | FR-705 | Export sample output | Should | Download transformed data |
 | FR-706 | Export as shareable URL (mapping encoded in hash) | Could | Base64 in URL fragment |
 
@@ -237,7 +240,7 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 | TR-001 | Single HTML file or static site (no build step required) | Must | |
 | TR-002 | No server-side processing — all transforms run in browser | Must | |
 | TR-003 | Bundle the transform engine (`transform.js`) in the web app | Must | Port to browser-compatible JS |
-| TR-004 | Zero npm dependencies (or minimal, explicit deps) | Must | Match project philosophy |
+| TR-004 | Zero npm dependencies — Preact inlined (~6KB minified) | Must | Match project philosophy; no build step or CDN |
 | TR-005 | ES modules or IIFE — no bundler required | Must | |
 | TR-006 | Work offline (no CDN dependencies) | Must | All assets bundled |
 | TR-007 | Graceful degradation for older browsers | Should | |
@@ -258,16 +261,17 @@ A standalone static web app would bring XSLT-editor-class features to json-trans
 | TR-200 | Handle datasets up to 10,000 records without freezing | Must | Virtual scrolling for trees |
 | TR-201 | Preview updates within 200ms of mapping change | Must | Debounced re-render |
 | TR-202 | Memory usage < 500MB for typical datasets | Should | |
+| TR-203 | Total bundle size < 200KB uncompressed | Must | Transform engine ~25KB + Preact ~6KB + app code + CSS |
 
 ### 5.4 Security
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| TR-300 | Sandbox compute functions (restricted execution context) | Must | No access to DOM, network, or global state |
+| TR-300 | Sandbox compute functions (restricted execution context) | Must | No access to DOM, network, or global state; wrapped in try-catch with stripped globals |
 | TR-301 | Sanitize file inputs (validate JSON before parsing) | Must | |
 | TR-302 | No network requests (all local processing) | Must | |
 | TR-303 | CSP-compatible (no inline scripts if possible) | Should | |
-| TR-304 | Compute function timeout protection | Should | Prevent infinite loops |
+| TR-304 | Compute function timeout protection | Should | AbortController, 500ms per invocation to prevent infinite loops |
 | TR-305 | Warning dialog when loading mappings with compute functions | Must | Informed consent |
 
 ---
@@ -359,27 +363,42 @@ The web app must support all features including `compute`. When compute function
 
 ---
 
-## 9. Open Questions
+## 9. Resolved Decisions
 
-1. **Framework choice:** Vanilla JS vs. lightweight framework (Preact, Svelte)? Given the "zero dependencies" philosophy, vanilla JS + Web Components seems aligned, but a small framework would dramatically reduce boilerplate for the tree views and reactive preview.
+The following design decisions were made to resolve the open questions from v0.1:
 
-2. **Bundle size:** The transform engine is ~800 LoC. How large is acceptable for a single-file app? Target: < 200KB uncompressed?
+### D1: Framework — Preact (inlined)
+Use Preact (~6KB minified) inlined directly in the HTML file. This preserves the "zero npm dependencies" and "single file" requirements while giving us reactive state management for tree views and live preview. No build step, no CDN dependency. Vendored copy shipped with the app.
 
-3. **CSV support:** The CLI has a hand-rolled CSV parser. Should the web app include this, or defer to JSON-only for v1?
+### D2: Bundle Size — < 200KB uncompressed
+Target: < 200KB uncompressed total. The transform engine is ~800 LoC (~25KB). Preact adds ~6KB minified. That leaves ~169KB for app code, CSS, and bundled sample data. If we exceed it, we trim sample data or defer features.
 
-4. **Schema support:** JSON Schema validation is a complex feature. Should it be v1 or deferred?
+### D3: CSV Support — Deferred to v2
+JSON-only for v1. The CLI's hand-rolled CSV parser would need browser adaptation. FR-002 demoted to "Won't (v2)". Can be added back later without breaking anything.
 
-5. **Visual mapping UX:** Click-to-link vs. drag-and-drop vs. table-based mapping? Each has tradeoffs in implementation complexity vs. user intuitiveness.
+### D4: JSON Schema Support — Deferred to v2
+All FR-800 to FR-803 items are "Could" priority. JSON Schema validation is complex and would add significant bulk. The core value proposition (visual mapping + live preview) works perfectly well without it.
 
-6. **localStorage persistence:** Auto-save drafts to localStorage? This raises privacy questions for sensitive data.
+### D5: Visual Mapping UX — Table-based primary, click-to-link secondary
+Table-based mapping as the primary interface (each row = target field with source path input). Click-to-link available in tree views for exploration. Table-based is most implementable and still intuitive; click-to-link is great for tree navigation but hard to implement well without a full visual framework.
 
-7. **Sample datasets:** Should the app ship with bundled sample data for demos/tutorial?
+### D6: localStorage Persistence — Opt-in with clear toggle
+Show a banner on first load: "Auto-save your work to browser storage? (data stays on this device)." Default to OFF for privacy-sensitive users. When enabled, save mapping drafts every 30 seconds. Include a "Clear saved data" button prominently.
 
-8. **Compute function sandboxing:** How to safely execute user-defined JS in the browser? Options: Web Worker isolation, restricted `new Function()` with parameter validation, or a custom expression evaluator.
+### D7: Sample Datasets — 2-3 bundled sets
+Ship with bundled sample data: one nested object example, one array example. Keep them under 5KB total. Load as embedded JS constants, not separate files. Lets new users immediately try the app without finding their own data.
 
-9. **Compute function editor UX:** Should we provide a template picker for common operations (arithmetic, string concat, date math) plus a free-form editor for advanced users?
+### D8: Compute Function Sandboxing — Restricted `new Function()` + timeout
+Web Workers can't be inlined in a single HTML file (need Blob URL or separate file, breaks `file://` protocol). Practical approach:
+- Wrap compute functions in try-catch that strips `window`, `document`, `fetch`, `eval` access
+- Use `AbortController` timeout (500ms per invocation) to prevent infinite loops
+- Show warning before executing any mapping with compute functions (TR-305)
 
-10. **Export format decision:** When should the app default to `.json` vs `.js` export? Should it auto-detect based on whether compute functions are present?
+### D9: Compute Function Editor UX — Template picker + free-form editor
+Most users want common operations: field concatenation, arithmetic (+, -, *, /), date formatting, string operations (upper/lower/trim/substring). Provide ~10-15 pre-built templates with parameter slots. Advanced users can switch to free-form JS. Matches Must/Should split in FR-317 (templates = Must) and FR-318 (custom = Should).
+
+### D10: Export Format — Auto-detect
+If the mapping contains compute functions, default to `.js` export with `export default`. If purely declarative, default to `.json` but offer both formats. Mirrors what the CLI already does: `.js` for compute, `.json` for portability. User can always override the choice.
 
 ---
 
@@ -400,7 +419,7 @@ The web app must support all features including `compute`. When compute function
 
 | Category | Must | Should | Could | Won't (v1) |
 |----------|------|--------|-------|------------|
-| Data Loading | 4 | 1 | 2 | 0 |
+| Data Loading | 4 | 1 | 3 | 1 |
 | Source Tree | 4 | 3 | 0 | 0 |
 | Target Schema | 3 | 2 | 2 | 0 |
 | Visual Mapping | 8 | 7 | 4 | 0 |
@@ -410,8 +429,8 @@ The web app must support all features including `compute`. When compute function
 | Export/Import | 4 | 1 | 1 | 0 |
 | Schema Integration | 0 | 0 | 4 | 0 |
 | UI/UX | 4 | 3 | 2 | 0 |
-| Technical | 9 | 4 | 2 | 0 |
-| **Total** | **51** | **29** | **20** | **0** |
+| Technical | 10 | 4 | 2 | 0 |
+| **Total** | **52** | **29** | **21** | **1** |
 
 ---
 

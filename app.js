@@ -818,12 +818,61 @@
     {
       id: "overview",
       title: "Overview",
-      body: "Load JSON source data, define a mapping, and preview transformed output in real time.\n\nVisual mode — table editor for simple, forEach, and nested mappings.\nJSON / JS mode — full mapping document including conditions, compute, and dictionaries.\nWizard — guided steps with format suggestions.",
+      body: "Load JSON source data, define a mapping, and preview transformed output in real time.\n\nThree editor modes work together: Visual (table UI), JSON (pure data), and JS (module with export default). Not every feature is available in every mode — start with JSON vs JS in the help nav.",
+    },
+    {
+      id: "json-vs-js",
+      title: "JSON vs JS",
+      body: "JSON and JS both describe the same mapping object. JSON is strict data only; JS wraps that object in export default and allows real JavaScript functions. The app picks Visual, JSON, or JS automatically when you import, or you can switch with the Visual / JSON / JS buttons.",
+      compareRows: [
+        { feature: "from, format, map, default", visual: "Yes", json: "Yes", js: "Yes" },
+        { feature: "forEach & nested fields", visual: "Yes", json: "Yes", js: "Yes" },
+        { feature: "if / then / else, and / or / not", visual: "View only", json: "Yes", js: "Yes" },
+        { feature: "template, coalesce, static value", visual: "View only", json: "Yes", js: "Yes" },
+        { feature: "lookup & inline dictionaries", visual: "View only", json: "Yes", js: "Yes" },
+        { feature: "schema validation block", visual: "View only", json: "Yes", js: "Yes" },
+        { feature: "passthrough: true (toggle)", visual: "Yes", json: "Yes", js: "Yes" },
+        { feature: "passthrough: { exclude: [...] }", visual: "View only", json: "Yes", js: "Yes" },
+        { feature: "compute as expression string", visual: "Templates", json: "Yes", js: "Yes" },
+        { feature: "compute as (a,b) => { ... }", visual: "No", json: "No", js: "JS only" },
+        { feature: "Comments in mapping file", visual: "—", json: "No", js: "Yes" },
+        { feature: "dictionaries.$file (external JSON)", visual: "—", json: "CLI only", js: "CLI only" },
+        { feature: "groupBy, flatten, filter, aggregate…", visual: "View only", json: "Yes", js: "Yes" },
+      ],
+      examples: [
+        {
+          title: "Same logic — JSON vs JS",
+          description: "JSON must use a string for compute. JS can use an arrow function (required for multi-line logic and dicts access patterns).",
+          mode: "both",
+          code: [
+            "// ── JSON (.json) ──",
+            '"line_total": {',
+            '  "from": ["Price", "Qty"],',
+            '  "compute": "return parseFloat(a) * Number(b);"',
+            "}",
+            "",
+            "// ── JS (.js) ──",
+            "line_total: {",
+            '  from: ["Price", "Qty"],',
+            "  compute: (price, qty) => parseFloat(price) * qty,",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "When the app forces JS mode",
+          description: "Import or export switches to JS if any field uses a function-valued compute. Visual mode stays available for simple rows; advanced fields show as read-only cards.",
+          mode: "js",
+          code: [
+            "// Nested order sample — line_total uses a function → use JS mode",
+            "compute: (price, qty) => parseFloat(price) * qty",
+          ].join("\n"),
+        },
+      ],
     },
     {
       id: "field-map",
       title: "Field mapping",
-      body: "Each destination field is defined under fields in the mapping. Most entries use from to read a source path (dot notation for nested data).",
+      body: "Each destination field is defined under fields. Works in Visual, JSON, and JS.\n\nVisual mode edits these interactively; JSON/JS show the full document.",
       examples: [
         {
           title: "Rename + format",
@@ -856,21 +905,30 @@
     {
       id: "compute",
       title: "Compute",
-      body: "Compute combines one or more source paths with a JavaScript function. In .js mappings, use a real function; in JSON, the engine uses a sandboxed expression.\n\nParameters: a, b, c… match from paths in order. You may also receive row (full source record) and dicts (inline dictionaries). Edit compute in JS mode or use Visual → Compute with templates.",
+      body: "Compute combines source paths with custom logic.\n\nJSON or JS: use a string expression (return …) — parameters are a, b, c in order, plus row and dicts when needed.\n\nJS only: use a real function (price, qty) => … or (empId, row, dicts) => …. Required for samples like Nested order (line_total) and Timesheet (dictionary hops).\n\nVisual: Compute row type writes a sandboxed string expression (same as JSON), not an arrow function.",
       examples: [
         {
           title: "Multiply two fields (line total)",
-          description: "Common inside forEach item mappings (see Nested order sample).",
+          description: "Nested order sample — in JSON use the string form; in JS use the function form.",
+          mode: "both",
           code: [
+            "// JS (.js file):",
             "line_total: {",
             '  from: ["Price", "Qty"],',
             "  compute: (price, qty) => parseFloat(price) * qty,",
+            "},",
+            "",
+            '// JSON (.json file) — string only:',
+            '"line_total": {',
+            '  "from": ["Price", "Qty"],',
+            '  "compute": "return parseFloat(a) * Number(b);"',
             "},",
           ].join("\n"),
         },
         {
           title: "Concatenate with full row access",
-          description: "Third argument is the source row — useful for extra checks.",
+          description: "JS only — arrow functions can use the row argument.",
+          mode: "js",
           code: [
             "display_name: {",
             '  from: ["FirstName", "LastName"],',
@@ -880,7 +938,8 @@
         },
         {
           title: "Build a formatted address",
-          description: "Format each segment before joining (Data cleaning sample).",
+          description: "JS only — multi-line function body.",
+          mode: "js",
           code: [
             "address: {",
             '  from: ["street", "city", "state", "zip"],',
@@ -893,7 +952,8 @@
         },
         {
           title: "Dictionary lookup in compute",
-          description: "dicts holds mapping.dictionaries entries. Timesheet sample pattern.",
+          description: "JS only — dicts is passed to function compute; use string compute in JSON only for simple expressions.",
+          mode: "js",
           code: [
             "department: {",
             '  from: ["employee_id"],',
@@ -907,7 +967,8 @@
         },
         {
           title: "Visual editor templates",
-          description: "In Visual mode, pick Compute and use templates (concat, add, divide, custom). Parameters map to a, b, c in the expression.",
+          description: "Visual / JSON — produces a string compute field (export as JSON or JS).",
+          mode: "json",
           code: [
             "// Equivalent to: return [a, b].filter(...).join(\" \");",
             'compute: "return String(a) + \\" \\" + String(b);"',
@@ -918,7 +979,7 @@
     {
       id: "conditions",
       title: "Conditions (if / then / else)",
-      body: "Conditional fields emit then or else based on a condition object. Use JSON/JS mode — they appear as read-only cards in Visual mode.\n\nOperators: eq, neq, gt, gte, lt, lte, truthy, falsy, exists, matches (regex), in (array of values). Field may be a top-level or dot path.",
+      body: "JSON or JS only — not editable in Visual (shown as read-only cards). Paste or write rules in JSON/JS mode, or import a sample like Employee conditions.\n\nOperators: eq, neq, gt, gte, lt, lte, truthy, falsy, exists, matches (regex), in (array). Field may be a top-level or dot path.",
       examples: [
         {
           title: "Simple if / then / else",
@@ -993,7 +1054,7 @@
     {
       id: "logic-composite",
       title: "AND / OR / NOT",
-      body: "Combine conditions with and (all true), or (any true), or not (invert). Nest freely for complex rules. Employee import sample is the reference for composite logic.",
+      body: "JSON or JS only (Visual: view-only). Combine conditions with and, or, not. Employee import sample demonstrates nested composites.",
       examples: [
         {
           title: "AND — all conditions must pass",
@@ -1068,7 +1129,7 @@
     {
       id: "templates-coalesce",
       title: "Templates & coalesce",
-      body: "template builds a string from {field} placeholders on the source row. coalesce tries paths in order and uses the first non-null value (optional default). value sets a static literal with no source.",
+      body: "JSON or JS only (Visual: view-only). template uses {field} placeholders. coalesce tries paths in order. value sets a static literal.",
       examples: [
         {
           title: "Template string",
@@ -1100,11 +1161,12 @@
     {
       id: "foreach",
       title: "Array (forEach)",
-      body: "When a source field is an array of objects, forEach maps each element through a nested fields block. Sub-field from paths are relative to the array item.",
+      body: "Visual, JSON, and JS. Wizard can build forEach steps; add function compute on sub-fields in JS mode only.",
       examples: [
         {
           title: "Line items array",
-          description: "Nested order sample — output key items, source array LineItems.",
+          description: "JSON or JS — but line_total compute must be string (JSON) or function (JS).",
+          mode: "both",
           code: [
             "items: {",
             '  forEach: "LineItems",',
@@ -1114,7 +1176,8 @@
             '    unit_price:   { from: "Price", format: "number" },',
             "    line_total: {",
             '      from: ["Price", "Qty"],',
-            "      compute: (price, qty) => parseFloat(price) * qty,",
+            '      // JS: compute: (price, qty) => parseFloat(price) * qty',
+            '      // JSON: "compute": "return parseFloat(a) * Number(b);"',
             "    },",
             "  },",
             "},",
@@ -1125,7 +1188,7 @@
     {
       id: "nested",
       title: "Nested objects",
-      body: "A field whose definition is only fields (no from) builds a nested output object. Dot-path targets like customer.name are also valid for flat outputs.",
+      body: "Visual, JSON, and JS. Group outputs under a fields block or use dot-path destination keys.",
       examples: [
         {
           title: "Nested shipping block",
@@ -1153,11 +1216,12 @@
     {
       id: "dictionaries",
       title: "Dictionaries & lookup",
-      body: "mapping.dictionaries holds reference data (inline objects in the browser; $file in CLI). lookup resolves a key from from, optionally drill into lookupPath. Advanced lookups often use compute + dicts.",
+      body: "JSON or JS (Visual: view-only). In the browser, dictionaries must be inline objects — $file paths work in the CLI only, not in this app.\n\nlookup / lookupPath work in JSON and JS. Heavy multi-hop lookups are usually written as JS compute functions.",
       examples: [
         {
           title: "Inline dictionary + lookup",
-          description: "Timesheet pattern (browser: inline only).",
+          description: "JSON or JS in browser — no $file.",
+          mode: "json",
           code: [
             "dictionaries: {",
             "  statusMap: { A: \"approved\", P: \"pending\", R: \"rejected\" },",
@@ -1221,12 +1285,12 @@
     {
       id: "wizard",
       title: "Mapping wizard",
-      body: "Steps through fields, groups arrays (forEach) and nested paths, and supports format pickers. Finish opens Visual mode with the generated mapping. Complex rules still need JS/JSON mode.",
+      body: "Visual only output — produces simple, forEach, and nested mappings without function compute or conditions. After Finish, switch to JSON/JS to add if/compute/dictionaries.",
     },
     {
       id: "import-export",
       title: "Import & export",
-      body: "Import .json or .js from the json-transformer CLI (CLI Samples menu loads bundled examples). Export as .json or .js; compute functions require .js. Copy mapping uses the same content as export.",
+      body: "Imports auto-select mode: simple mappings → Visual; advanced rules → JSON; any function compute → JS.\n\nExport: .json when the mapping is data-only; .js when compute uses functions (functions are serialized if you export from JSON with string compute). Copy mapping follows the same rules.",
     },
     {
       id: "panels",
@@ -1235,10 +1299,17 @@
     },
   ];
 
+  function helpModeBadge(mode) {
+    if (!mode) return null;
+    var labels = { json: "JSON or JS", js: "JS only", both: "JSON vs JS", visual: "Visual" };
+    var label = labels[mode] || mode;
+    return h("span", { className: "help-mode-badge help-mode-" + mode }, label);
+  }
+
   function HelpPanel(props) {
     var open = props.open;
     var onClose = props.onClose;
-    var _useState = useState(HELP_TOPICS[0].id), activeId = _useState[0], setActiveId = _useState[1];
+    var _useState = useState("json-vs-js"), activeId = _useState[0], setActiveId = _useState[1];
 
     if (!open) return null;
 
@@ -1269,10 +1340,35 @@
             active.body.split("\n\n").map(function (para, i) {
               return h("p", { key: "p-" + i, className: "help-content-body" }, para);
             }),
+            active.compareRows && active.compareRows.length ? h("div", { className: "help-compare-wrap" },
+              h("table", { className: "help-compare-table" },
+                h("thead", null,
+                  h("tr", null,
+                    h("th", null, "Feature"),
+                    h("th", null, "Visual"),
+                    h("th", null, "JSON"),
+                    h("th", null, "JS")
+                  )
+                ),
+                h("tbody", null,
+                  active.compareRows.map(function (row, i) {
+                    return h("tr", { key: "cmp-" + i },
+                      h("td", null, row.feature),
+                      h("td", null, row.visual),
+                      h("td", null, row.json),
+                      h("td", null, row.js)
+                    );
+                  })
+                )
+              )
+            ) : null,
             active.examples && active.examples.length ? h("div", { className: "help-examples" },
               active.examples.map(function (ex, i) {
                 return h("section", { key: "ex-" + i, className: "help-example" },
-                  h("h4", { className: "help-example-title" }, ex.title),
+                  h("h4", { className: "help-example-title" },
+                    ex.title,
+                    helpModeBadge(ex.mode)
+                  ),
                   ex.description ? h("p", { className: "help-example-desc" }, ex.description) : null,
                   h("pre", { className: "help-example-code" }, ex.code)
                 );

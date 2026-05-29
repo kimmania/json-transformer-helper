@@ -1310,6 +1310,14 @@
     var open = props.open;
     var onClose = props.onClose;
     var _useState = useState("json-vs-js"), activeId = _useState[0], setActiveId = _useState[1];
+    var contentRef = useRef(null);
+    var navRef = useRef(null);
+
+    useEffect(function () {
+      if (!open) return;
+      if (contentRef.current) contentRef.current.scrollTop = 0;
+      if (navRef.current) navRef.current.scrollTop = 0;
+    }, [activeId, open]);
 
     if (!open) return null;
 
@@ -1325,7 +1333,7 @@
           h("button", { type: "button", className: "btn btn-icon", onClick: onClose, title: "Close help" }, "\u2715")
         ),
         h("div", { className: "help-panel-body" },
-          h("nav", { className: "help-nav" },
+          h("nav", { ref: navRef, className: "help-nav" },
             HELP_TOPICS.map(function (topic) {
               return h("button", {
                 key: topic.id,
@@ -1335,7 +1343,7 @@
               }, topic.title);
             })
           ),
-          h("div", { className: "help-content" },
+          h("div", { ref: contentRef, className: "help-content", key: activeId },
             h("h3", { className: "help-content-title" }, active.title),
             active.body.split("\n\n").map(function (para, i) {
               return h("p", { key: "p-" + i, className: "help-content-body" }, para);

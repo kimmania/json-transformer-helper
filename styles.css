@@ -121,6 +121,26 @@ input:focus, select:focus, textarea:focus {
   overflow: hidden;
 }
 
+/* Root layout shell (Preact mount wraps header + main) */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-shell > .autosave-banner,
+.app-shell > .app-header {
+  flex-shrink: 0;
+}
+
+.app-shell > .app-main {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
 /* Header / Toolbar */
 .app-header {
   display: flex;
@@ -155,8 +175,12 @@ input:focus, select:focus, textarea:focus {
 /* Main content area */
 .app-main {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
   overflow: hidden;
+  min-height: 0;
+}
+
+.app-main > .panel {
   min-height: 0;
 }
 
@@ -200,19 +224,31 @@ input:focus, select:focus, textarea:focus {
 .panel-body-mapping {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
   overflow: hidden;
   padding: 0;
+  min-height: 0;
 }
 
 .panel-body-mapping > .inspector {
   flex-shrink: 0;
   padding: 12px 12px 0;
+  max-height: 35%;
+  overflow-y: auto;
+}
+
+.panel-body-mapping > .loading-spinner {
+  flex-shrink: 0;
+  padding: 12px;
 }
 
 .mapping-editor-scroll {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 12px;
 }
 
@@ -231,8 +267,9 @@ input:focus, select:focus, textarea:focus {
 }
 
 .panel-mapping {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 300px;
+  min-height: 0;
 }
 
 .panel-preview {
@@ -388,9 +425,7 @@ input:focus, select:focus, textarea:focus {
 /* ── Mapping Editor ────────────────────────────────────────────────── */
 
 .mapping-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: block;
 }
 
 .mapping-field-row {
@@ -398,10 +433,15 @@ input:focus, select:focus, textarea:focus {
   grid-template-columns: 1fr 1fr auto;
   gap: 8px;
   padding: 8px 12px;
+  margin-bottom: 12px;
   background: var(--bg-secondary);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
   align-items: start;
+}
+
+.mapping-editor > .flex {
+  margin-bottom: 12px;
 }
 
 .mapping-field-row:hover {

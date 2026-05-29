@@ -303,17 +303,15 @@
     var filteredData = data;
 
     if (!data) {
-      return h("div", null,
-        h("div", { className: "panel" },
-          h("div", { className: "panel-header" },
-            h("span", { className: "panel-title" }, "Source Data")
-          ),
-          h("div", { className: "panel-body" },
-            h("div", { className: "empty-state" },
-              h("div", { className: "empty-state-icon" }, "\uD83D\uDCC4"),
-              h("div", { className: "empty-state-text" }, "No data loaded"),
-              h("div", { className: "empty-state-text" }, "Load a JSON file or use sample data")
-            )
+      return h("div", { className: "panel panel-source" },
+        h("div", { className: "panel-header" },
+          h("span", { className: "panel-title" }, "Source Data")
+        ),
+        h("div", { className: "panel-body" },
+          h("div", { className: "empty-state" },
+            h("div", { className: "empty-state-icon" }, "\uD83D\uDCC4"),
+            h("div", { className: "empty-state-text" }, "No data loaded"),
+            h("div", { className: "empty-state-text" }, "Load a JSON file or use sample data")
           )
         )
       );
@@ -1193,7 +1191,7 @@
       }
     }, [mappingFields]);
 
-    return h("div", null,
+    return h("div", { className: "app-shell" },
       autosavePref === null ? h("div", { className: "autosave-banner" },
         h("span", null, "Auto-save your work to browser storage? (data stays on this device)"),
         h("div", { className: "flex gap-1" },

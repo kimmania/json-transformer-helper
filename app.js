@@ -557,6 +557,59 @@
     return h("div", { className: "tree-node" }, children);
   }
 
+  // ── Collapsible panel header ───────────────────────────────────────
+
+  function PanelCollapseHeader(props) {
+    var collapsed = props.collapsed;
+    var title = props.title;
+    var shortTitle = props.shortTitle || title;
+    var onToggle = props.onToggle;
+    var meta = props.meta;
+
+    function handleToggleClick(e) {
+      e.stopPropagation();
+      if (onToggle) onToggle();
+    }
+
+    function handleHeaderClick() {
+      if (collapsed && onToggle) onToggle();
+    }
+
+    if (collapsed) {
+      return h("div", {
+        className: "panel-header panel-header-collapsed",
+        onClick: handleHeaderClick,
+        title: "Expand " + title,
+        role: "button",
+        "aria-label": "Expand " + title,
+      },
+        h("button", {
+          type: "button",
+          className: "btn btn-secondary panel-collapse-btn-expand",
+          onClick: handleToggleClick,
+          title: "Expand " + title,
+          "aria-label": "Expand " + title,
+        }, "\u25B6"),
+        h("span", { className: "panel-collapsed-label" }, shortTitle)
+      );
+    }
+
+    return h("div", { className: "panel-header" },
+      h("span", { className: "panel-title" }, title),
+      h("div", { className: "panel-header-actions" },
+        props.children,
+        meta || null,
+        onToggle ? h("button", {
+          type: "button",
+          className: "btn btn-sm btn-secondary panel-collapse-btn",
+          onClick: handleToggleClick,
+          title: "Collapse " + title,
+          "aria-label": "Collapse " + title,
+        }, "\u25C0") : null
+      )
+    );
+  }
+
   // ── Source Tree Panel ──────────────────────────────────────────────
 
   function SourceBreadcrumb(props) {
@@ -646,10 +699,12 @@
         className: "panel panel-source" + (collapsed ? " panel-collapsed" : ""),
         style: panelStyle,
       },
-        h("div", { className: "panel-header" },
-          h("span", { className: "panel-title" }, collapsed ? "" : "Source Data"),
-          onToggleCollapse ? h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: onToggleCollapse }, collapsed ? "\u25B6" : "\u25C0") : null
-        ),
+        h(PanelCollapseHeader, {
+          collapsed: collapsed,
+          title: "Source Data",
+          shortTitle: "Src",
+          onToggle: onToggleCollapse,
+        }),
         h("div", { className: "panel-body" },
           h("div", { className: "empty-state" },
             h("div", { className: "empty-state-icon" }, "\uD83D\uDCC4"),
@@ -664,11 +719,15 @@
       className: "panel panel-source" + (collapsed ? " panel-collapsed" : ""),
       style: panelStyle,
     },
-      h("div", { className: "panel-header" },
-        h("span", { className: "panel-title" }, collapsed ? "Src" : "Source Data"),
-        collapsed ? null : h("span", { className: "text-sm text-muted" }, Array.isArray(data) ? data.length + " records" : "1 object"),
-        onToggleCollapse ? h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: onToggleCollapse }, collapsed ? "\u25B6" : "\u25C0") : null
-      ),
+      h(PanelCollapseHeader, {
+        collapsed: collapsed,
+        title: "Source Data",
+        shortTitle: "Src",
+        onToggle: onToggleCollapse,
+        meta: collapsed ? null : h("span", { className: "text-sm text-muted panel-header-meta" },
+          Array.isArray(data) ? data.length + " records" : "1 object"
+        ),
+      }),
       collapsed ? null : h("div", { className: "source-panel-body" },
         h("div", { className: "source-toolbar" },
           h("input", {
@@ -1200,20 +1259,17 @@
       : null;
 
     return h("div", { className: "panel panel-preview" + (props.collapsed ? " panel-collapsed" : "") },
-      h("div", { className: "panel-header" },
-        h("span", { className: "panel-title" }, "Preview"),
-        h("div", { className: "flex gap-1 items-center" },
-          props.onToggleCollapse ? h("button", {
-            type: "button",
-            className: "btn btn-sm btn-secondary",
-            onClick: props.onToggleCollapse,
-            title: "Collapse panel",
-          }, props.collapsed ? "\u25B6" : "\u25C0") : null,
+      h(PanelCollapseHeader, {
+        collapsed: props.collapsed,
+        title: "Preview",
+        shortTitle: "Prev",
+        onToggle: props.onToggleCollapse,
+        meta: props.collapsed ? null : (
           errors && errors.length > 0
-            ? h("span", { className: "text-sm", style: { color: "var(--danger)" } }, errors.length + " err")
-            : h("span", { className: "text-sm text-muted" }, totalRecords + " shown")
-        )
-      ),
+            ? h("span", { className: "text-sm panel-header-meta", style: { color: "var(--danger)" } }, errors.length + " err")
+            : h("span", { className: "text-sm text-muted panel-header-meta" }, totalRecords + " shown")
+        ),
+      }),
       h("div", { className: "preview-controls" },
         h("label", { className: "text-sm" }, "Records:"),
         h("input", {
@@ -2290,23 +2346,24 @@
           title: "Drag to resize source panel",
         }),
         h("div", { className: "panel panel-mapping" + (collapsedPanels.mapping ? " panel-collapsed" : "") },
-          h("div", { className: "panel-header" },
-            h("span", { className: "panel-title" }, collapsedPanels.mapping ? "Map" : "Mapping Editor"),
-            h("div", { className: "flex gap-1 flex-wrap" },
-              collapsedPanels.mapping ? null : [
-                h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: undoMapping, disabled: !undoStack.length, title: "Undo" }, "Undo"),
-                h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: redoMapping, disabled: !redoStack.length, title: "Redo" }, "Redo"),
-                ["visual", "json", "js"].map(function (mode) {
-                  return h("button", {
-                    key: mode,
-                    type: "button",
-                    className: "btn btn-sm " + (editorMode === mode ? "btn-primary" : "btn-secondary"),
-                    onClick: function () { switchMode(mode); },
-                  }, mode === "visual" ? "Visual" : mode.toUpperCase());
-                }),
-              ],
-              h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: function () { togglePanel("mapping"); } }, collapsedPanels.mapping ? "\u25B6" : "\u25C0")
-            )
+          h(PanelCollapseHeader, {
+            collapsed: collapsedPanels.mapping,
+            title: "Mapping Editor",
+            shortTitle: "Map",
+            onToggle: function () { togglePanel("mapping"); },
+          },
+            collapsedPanels.mapping ? null : [
+              h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: undoMapping, disabled: !undoStack.length, title: "Undo" }, "Undo"),
+              h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: redoMapping, disabled: !redoStack.length, title: "Redo" }, "Redo"),
+              ["visual", "json", "js"].map(function (mode) {
+                return h("button", {
+                  key: mode,
+                  type: "button",
+                  className: "btn btn-sm " + (editorMode === mode ? "btn-primary" : "btn-secondary"),
+                  onClick: function () { switchMode(mode); },
+                }, mode === "visual" ? "Visual" : mode.toUpperCase());
+              }),
+            ]
           ),
           collapsedPanels.mapping ? null : h("div", { className: "panel-body panel-body-mapping" },
             isLoading ? h("div", { className: "loading-spinner" }, "Processing...") : null,

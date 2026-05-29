@@ -1353,10 +1353,32 @@ input:focus, select:focus, textarea:focus {
 
 .wizard-subfield-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(140px, 1.2fr) auto;
+  grid-template-columns: minmax(100px, 1fr) minmax(120px, 1.1fr) minmax(110px, 0.9fr) auto;
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.wizard-subfield-header {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(120px, 1.1fr) minmax(110px, 0.9fr) auto;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.wizard-subfield-header-action {
+  width: 52px;
+}
+
+.wizard-format-select {
+  width: 100%;
+  min-width: 0;
+  font-size: 13px;
 }
 
 .wizard-subfield-source {

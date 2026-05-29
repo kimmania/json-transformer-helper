@@ -1504,6 +1504,36 @@
     return stepDef.field;
   }
 
+  function wizardResolvedFormat(answer, fieldPath, inspection) {
+    if (answer && Object.prototype.hasOwnProperty.call(answer, "format")) {
+      return answer.format || "";
+    }
+    var inf = JsonTransformer.inferFieldDefaults(inspection, fieldPath);
+    return inf.format || "";
+  }
+
+  function wizardFormatSelect(props) {
+    var options = [
+      { value: "", label: "None" },
+      { value: "uppercase", label: "Uppercase" },
+      { value: "lowercase", label: "Lowercase" },
+      { value: "titlecase", label: "Title Case" },
+      { value: "trim", label: "Trim" },
+      { value: "number", label: "Number" },
+      { value: "date", label: "Date" },
+    ];
+    return h("select", {
+      id: props.id,
+      className: "mapping-field-input wizard-format-select",
+      value: props.value || "",
+      disabled: props.disabled,
+      title: props.title || "Output format",
+      onChange: props.onChange,
+    }, options.map(function (opt) {
+      return h("option", { key: opt.value, value: opt.value }, opt.label);
+    }));
+  }
+
   // ── Wizard Modal ───────────────────────────────────────────────────
 
   function WizardModal(props) {
@@ -1706,6 +1736,12 @@
         h("div", { className: "wizard-subfields-title" },
           stepDef.kind === "forEach" ? "Map each array item" : "Map nested fields"
         ),
+        h("div", { className: "wizard-subfield-header" },
+          h("span", null, "Source"),
+          h("span", null, "Destination"),
+          h("span", null, "Format"),
+          h("span", { className: "wizard-subfield-header-action" }, "")
+        ),
         stepDef.subFieldPaths.map(function (subPath) {
           var subAns = ans && ans.nestedAnswers
             ? ans.nestedAnswers.find(function (a) { return a.field === subPath; })
@@ -1713,10 +1749,10 @@
           var isSubSkipped = subAns && subAns.action === "skip";
           var relSource = relativeSubSource(stepDef.kind, stepDef.field || stepDef.parent, subPath);
           var dest = isSubSkipped ? "" : ((subAns && subAns.target) || inferSubFieldTarget(subPath));
+          var subFormat = wizardResolvedFormat(subAns, subPath, inspection);
           return h("div", { key: subPath, className: "wizard-subfield-row" },
             h("div", { className: "wizard-subfield-source" },
-              h("span", { className: "font-mono text-sm", title: subPath }, relSource),
-              h("span", { className: "text-sm text-muted" }, " \u2192 ")
+              h("span", { className: "font-mono text-sm", title: subPath }, relSource)
             ),
             h("input", {
               className: "mapping-field-input",
@@ -1728,6 +1764,16 @@
                 updateNestedAnswer(stepDef, subPath, {
                   action: "accept",
                   target: e.target.value.trim(),
+                });
+              },
+            }),
+            wizardFormatSelect({
+              value: subFormat,
+              disabled: isSubSkipped,
+              onChange: function (e) {
+                updateNestedAnswer(stepDef, subPath, {
+                  action: "accept",
+                  format: e.target.value || null,
                 });
               },
             }),
@@ -1812,10 +1858,19 @@
               source: stepDef.field,
               target: target || inferred.targetField,
               type: inferred.type,
-              format: inferred.format,
+              format: (currentAnswer && Object.prototype.hasOwnProperty.call(currentAnswer, "format"))
+                ? currentAnswer.format
+                : inferred.format,
             });
           }
         }
+
+        var simpleInferred = stepDef.kind === "simple"
+          ? JsonTransformer.inferFieldDefaults(inspection, stepDef.field)
+          : null;
+        var simpleFormat = stepDef.kind === "simple" && !isSkipped
+          ? wizardResolvedFormat(currentAnswer, stepDef.field, inspection)
+          : "";
 
         return h("div", null,
           h("h3", { className: "mb-2" }, "Step " + step + " of " + fieldStepCount),
@@ -1838,6 +1893,23 @@
                 onInput: function (e) { saveDestination(e.target.value.trim()); },
               })
             ),
+            !isSkipped && stepDef.kind === "simple" ? h("div", { className: "wizard-field-map-row" },
+              h("label", { className: "wizard-field-map-label", for: "wizard-format-" + step }, "Format"),
+              wizardFormatSelect({
+                id: "wizard-format-" + step,
+                value: simpleFormat,
+                onChange: function (e) {
+                  saveStepAnswer(stepDef, {
+                    kind: "simple",
+                    action: "accept",
+                    source: stepDef.field,
+                    target: destinationName || simpleInferred.targetField,
+                    type: simpleInferred.type,
+                    format: e.target.value || null,
+                  });
+                },
+              })
+            ) : null,
             fieldInfo ? h("div", { className: "text-sm text-muted" },
               "Type: " + fieldInfo.type +
               (stepDef.subFieldPaths && stepDef.subFieldPaths.length
@@ -1875,7 +1947,7 @@
               ? "Configure how each array element maps to the destination object."
               : stepDef.kind === "nested"
                 ? "Configure fields inside the nested output object."
-                : "Edit the destination name above, or use the suggested name."
+                : "Edit the destination name and format, or use the suggested defaults."
           ) : null,
           step - 1 < fieldStepCount - 1 ? h("button", {
             type: "button",

@@ -302,12 +302,6 @@
     var sourceData = props.sourceData;
     var depth = props.depth || 0;
 
-    var _useState = useState(depth > 0 || !!searchQuery), expanded = _useState[0], setExpanded = _useState[1];
-
-    useEffect(function () {
-      if (searchQuery) setExpanded(true);
-    }, [searchQuery]);
-
     if (searchQuery && !treeHasMatchingDescendant(value, path, searchQuery)) {
       return null;
     }
@@ -315,6 +309,16 @@
     var type = getType(value);
     var isExpandable = type === "object" || type === "array";
     var isSelected = path === selectedPath;
+
+    var _useState = useState(function () {
+      if (searchQuery) return true;
+      if (isExpandable && depth === 0) return true;
+      return depth > 0;
+    }), expanded = _useState[0], setExpanded = _useState[1];
+
+    useEffect(function () {
+      if (searchQuery) setExpanded(true);
+    }, [searchQuery]);
 
     function handleClick() {
       if (isExpandable) {
@@ -326,14 +330,17 @@
     }
 
     function renderValue() {
-      if (type === "null") return h("span", { className: "tree-value", style: { color: "var(--type-null)" } }, "null");
-      if (type === "boolean") return h("span", { className: "tree-value", style: { color: "var(--type-boolean)" } }, String(value));
-      if (type === "number") return h("span", { className: "tree-value", style: { color: "var(--type-number)" } }, String(value));
-      if (type === "string") return h("span", { className: "tree-value", style: { color: "var(--type-string)" } }, truncate(value, 30));
-      if (type === "array") return h("span", { className: "tree-value" }, "[" + value.length + "]");
+      if (type === "null") return h("span", { className: "tree-value tree-value-primitive" }, "null");
+      if (type === "boolean") return h("span", { className: "tree-value tree-value-primitive" }, String(value));
+      if (type === "number") return h("span", { className: "tree-value tree-value-primitive" }, String(value));
+      if (type === "string") {
+        var display = truncate(value, 48);
+        return h("span", { className: "tree-value tree-value-string", title: value }, "\"" + display + "\"");
+      }
+      if (type === "array") return h("span", { className: "tree-value tree-value-meta" }, "[" + value.length + " items]");
       if (type === "object") {
         var keys = Object.keys(value);
-        return h("span", { className: "tree-value" }, "{" + keys.length + "}");
+        return h("span", { className: "tree-value tree-value-meta" }, "{" + keys.length + " fields}");
       }
       return null;
     }
@@ -348,15 +355,19 @@
 
     var children = [
       h("div", {
-        className: "tree-node-content" + (isSelected ? " selected" : ""),
+        className: "tree-node-content" + (isSelected ? " selected" : "") + (isExpandable ? "" : " tree-node-leaf"),
         onClick: handleClick,
-        style: { paddingLeft: (depth * 12) + "px" },
+        style: { paddingLeft: (depth * 12 + 6) + "px" },
       },
         isExpandable ? h("span", { className: "tree-toggle" }, expanded ? "\u25BC" : "\u25B6") : h("span", { className: "tree-toggle" }),
-        nodeKey ? h("span", { className: "tree-key" }, nodeKey) : null,
-        h("span", { className: "tree-type " + type }, type),
-        renderValue(),
-        sampleHint
+        h("span", { className: "tree-label" },
+          nodeKey ? h("span", {
+            className: "tree-key",
+            title: path && path !== nodeKey ? nodeKey + " — path: " + path : nodeKey,
+          }, nodeKey) : null,
+          h("span", { className: "tree-type " + type }, type)
+        ),
+        h("span", { className: "tree-value-wrap" }, renderValue(), sampleHint)
       )
     ];
 
@@ -441,7 +452,7 @@
             key: "record-" + i,
             nodeKey: "Record " + (i + 1),
             value: record,
-            path: null,
+            path: String(i),
             onSelect: onSelect,
             selectedPath: selectedPath,
             searchQuery: searchQuery,

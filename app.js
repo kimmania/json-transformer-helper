@@ -315,6 +315,33 @@
     return false;
   }
 
+  function renderSearchHighlight(text, query) {
+    if (!query || text == null) return text;
+    var s = String(text);
+    var q = String(query).toLowerCase();
+    var lower = s.toLowerCase();
+    if (lower.indexOf(q) < 0) return s;
+    var parts = [];
+    var i = 0;
+    var partKey = 0;
+    while (i < s.length) {
+      var idx = lower.indexOf(q, i);
+      if (idx < 0) {
+        parts.push(s.slice(i));
+        break;
+      }
+      if (idx > i) parts.push(s.slice(i, idx));
+      parts.push(h("mark", { key: "m" + partKey++, className: "tree-search-mark" }, s.slice(idx, idx + q.length)));
+      i = idx + q.length;
+    }
+    if (parts.length === 1 && typeof parts[0] === "string") return parts[0];
+    return h(Fragment, null, parts);
+  }
+
+  function nodeMatchesSearchQuery(path, nodeKey, value, query) {
+    return !!query && treeNodeMatchesSearch(path, nodeKey, value, query);
+  }
+
   function visualFieldsFromMapping(mapping) {
     return MF ? MF.visualFieldsFromMapping(mapping) : [];
   }
@@ -377,7 +404,7 @@
     var visualFields = MF.visualFieldsFromMapping(mapping);
     var fieldCount = Object.keys(mapping.fields || {}).length;
     var advancedCount = visualFields.filter(function (f) {
-      return f.kind === "advanced" || f.kind === "condition" || f.kind === "template" || f.kind === "static";
+      return f.kind === "advanced" || f.kind === "condition" || f.kind === "static";
     }).length;
 
     return {
@@ -437,6 +464,7 @@
     var type = getType(value);
     var isExpandable = type === "object" || type === "array";
     var isSelected = path === selectedPath;
+    var isSearchMatch = nodeMatchesSearchQuery(path, nodeKey, value, searchQuery);
 
     var _useState = useState(function () {
       if (searchQuery) return true;
@@ -479,7 +507,12 @@
       if (type === "number") return h("span", { className: "tree-value tree-value-primitive" }, String(value));
       if (type === "string") {
         var display = truncate(value, 48);
-        return h("span", { className: "tree-value tree-value-string", title: value }, "\"" + display + "\"");
+        var displayContent = searchQuery && isSearchMatch
+          ? renderSearchHighlight(display, searchQuery)
+          : display;
+        return h("span", { className: "tree-value tree-value-string", title: value },
+          "\"", displayContent, "\""
+        );
       }
       if (type === "array") {
         return h(Fragment, null,
@@ -515,7 +548,10 @@
 
     var children = [
       h("div", {
-        className: "tree-node-content" + (isSelected ? " selected" : "") + (isExpandable ? "" : " tree-node-leaf"),
+        className: "tree-node-content"
+          + (isSelected ? " selected" : "")
+          + (isSearchMatch ? " tree-search-match" : "")
+          + (isExpandable ? "" : " tree-node-leaf"),
         "data-depth": depth,
         onClick: handleClick,
         style: { paddingLeft: (depth * 14 + 6) + "px" },
@@ -527,7 +563,9 @@
           displayKey ? h("span", {
             className: "tree-key",
             title: path && path !== displayKey ? displayKey + " — path: " + path : displayKey,
-          }, displayKey) : null,
+          },
+            searchQuery && isSearchMatch ? renderSearchHighlight(displayKey, searchQuery) : displayKey
+          ) : null,
           h("span", { className: "tree-type " + treeTypeBadgeClass(type), title: type }, treeTypeBadgeLabel(type))
         ),
         h("span", { className: "tree-value-wrap" }, renderValue(), sampleHint)
@@ -685,7 +723,18 @@
     var panelStyle = props.panelStyle;
     var _useState = useState(""), searchQuery = _useState[0], setSearchQuery = _useState[1];
     var _useState2 = useState({ version: 0, all: true }), expandControl = _useState2[0], setExpandControl = _useState2[1];
+    var _useState3 = useState(0), recordIndex = _useState3[0], setRecordIndex = _useState3[1];
+    var _useState4 = useState("single"), treeViewMode = _useState4[0], setTreeViewMode = _useState4[1];
     var selectedPath = props.selectedPath;
+
+    var isRecordArray = Array.isArray(data) && data.length > 0;
+    var safeRecordIndex = isRecordArray ? Math.min(Math.max(0, recordIndex), data.length - 1) : 0;
+
+    useEffect(function () {
+      if (isRecordArray && recordIndex >= data.length) {
+        setRecordIndex(Math.max(0, data.length - 1));
+      }
+    }, [data, isRecordArray, recordIndex]);
 
     function expandAll() {
       setExpandControl({ version: expandControl.version + 1, all: true });
@@ -695,15 +744,40 @@
       setExpandControl({ version: expandControl.version + 1, all: false });
     }
 
+    function resolveTreeContext() {
+      if (!data) return { treeData: null, treeSourceData: null, breadcrumbData: null };
+      if (!isRecordArray) {
+        return { treeData: data, treeSourceData: data, breadcrumbData: data };
+      }
+      if (treeViewMode === "all") {
+        return { treeData: data, treeSourceData: data, breadcrumbData: data };
+      }
+      var record = data[safeRecordIndex];
+      return { treeData: record, treeSourceData: data, breadcrumbData: record };
+    }
+
+    var treeContext = resolveTreeContext();
+
     function handleNavigate(path) {
-      if (!path || !onSelect) return;
-      var val = resolvePathInSourceData(data, path);
+      if (!path || !onSelect || !treeContext.breadcrumbData) return;
+      var val = resolvePathInSourceData(treeContext.breadcrumbData, path);
       onSelect(path, val, getType(val));
     }
 
-    var breadcrumbs = selectedPath ? pathToBreadcrumbs(data, selectedPath) : [];
-    var selectedValue = selectedPath != null && selectedPath !== ""
-      ? resolvePathInSourceData(data, selectedPath)
+    function goToRecord(nextIndex) {
+      if (!isRecordArray) return;
+      var idx = Math.min(data.length - 1, Math.max(0, nextIndex));
+      setRecordIndex(idx);
+      if (onSelect) {
+        onSelect("", data[idx], getType(data[idx]));
+      }
+    }
+
+    var breadcrumbs = selectedPath && treeContext.breadcrumbData
+      ? pathToBreadcrumbs(treeContext.breadcrumbData, selectedPath)
+      : [];
+    var selectedValue = selectedPath != null && selectedPath !== "" && treeContext.breadcrumbData
+      ? resolvePathInSourceData(treeContext.breadcrumbData, selectedPath)
       : undefined;
 
     if (!data) {
@@ -754,10 +828,59 @@
             h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: collapseAll, title: "Collapse all nodes" }, "Collapse")
           )
         ),
+        isRecordArray ? h("div", { className: "source-record-controls" },
+          h("div", { className: "source-view-toggle", role: "group", "aria-label": "Source tree view" },
+            h("button", {
+              type: "button",
+              className: "btn btn-sm" + (treeViewMode === "single" ? " btn-primary" : " btn-secondary"),
+              onClick: function () { setTreeViewMode("single"); },
+              "data-tooltip": "Browse one record at a time (paths match mapping fields)",
+            }, "One record"),
+            h("button", {
+              type: "button",
+              className: "btn btn-sm" + (treeViewMode === "all" ? " btn-primary" : " btn-secondary"),
+              onClick: function () { setTreeViewMode("all"); },
+              "data-tooltip": "List every record at the top level",
+            }, "All records")
+          ),
+          treeViewMode === "single" ? h("div", { className: "source-record-nav" },
+            h("button", {
+              type: "button",
+              className: "btn btn-sm btn-secondary",
+              onClick: function () { goToRecord(safeRecordIndex - 1); },
+              disabled: safeRecordIndex <= 0,
+              title: "Previous record",
+            }, "\u25C0"),
+            h("label", { className: "source-record-goto" },
+              h("span", { className: "text-sm text-muted" }, "Record"),
+              h("input", {
+                className: "source-record-input",
+                type: "number",
+                min: 1,
+                max: data.length,
+                value: safeRecordIndex + 1,
+                onChange: function (e) {
+                  var n = parseInt(e.target.value, 10);
+                  if (!isNaN(n)) goToRecord(n - 1);
+                },
+              }),
+              h("span", { className: "text-sm text-muted" }, "of " + data.length)
+            ),
+            h("button", {
+              type: "button",
+              className: "btn btn-sm btn-secondary",
+              onClick: function () { goToRecord(safeRecordIndex + 1); },
+              disabled: safeRecordIndex >= data.length - 1,
+              title: "Next record",
+            }, "\u25B6")
+          ) : h("span", { className: "source-record-hint text-sm text-muted" },
+            data.length + " records — expand each to inspect"
+          )
+        ) : null,
         h(SourceBreadcrumb, { crumbs: breadcrumbs, onNavigate: handleNavigate }),
         h("div", { className: "source-split" },
           h("div", { className: "source-tree-scroll tree" },
-            Array.isArray(data) ? data.map(function (record, i) {
+            isRecordArray && treeViewMode === "all" ? data.map(function (record, i) {
               return h(TreeNode, {
                 key: "record-" + i,
                 nodeKey: "Record " + (i + 1),
@@ -771,14 +894,14 @@
                 expandControl: expandControl,
               });
             }) : h(TreeNode, {
-              key: "root",
-              nodeKey: "root",
-              value: data,
+              key: isRecordArray ? "record-" + safeRecordIndex : "root",
+              nodeKey: isRecordArray ? "Record " + (safeRecordIndex + 1) : "root",
+              value: treeContext.treeData,
               path: "",
               onSelect: onSelect,
               selectedPath: selectedPath,
               searchQuery: searchQuery,
-              sourceData: data,
+              sourceData: treeContext.treeSourceData,
               depth: 0,
               expandControl: expandControl,
             })
@@ -840,7 +963,9 @@
         { feature: "from, format, map, default", visual: "Yes", json: "Yes", js: "Yes" },
         { feature: "forEach & nested fields", visual: "Yes", json: "Yes", js: "Yes" },
         { feature: "if / then / else, and / or / not", visual: "View only", json: "Yes", js: "Yes" },
-        { feature: "template, coalesce, static value", visual: "View only", json: "Yes", js: "Yes" },
+        { feature: "template string {Field}", visual: "Yes", json: "Yes", js: "Yes" },
+        { feature: "static value", visual: "View only", json: "Yes", js: "Yes" },
+        { feature: "coalesce (fallback paths)", visual: "Yes", json: "Yes", js: "Yes" },
         { feature: "lookup & inline dictionaries", visual: "View only", json: "Yes", js: "Yes" },
         { feature: "schema validation block", visual: "View only", json: "Yes", js: "Yes" },
         { feature: "passthrough: true (toggle)", visual: "Yes", json: "Yes", js: "Yes" },
@@ -1141,7 +1266,7 @@
     {
       id: "templates-coalesce",
       title: "Templates & coalesce",
-      body: "JSON or JS only (Visual: view-only). template uses {field} placeholders. coalesce tries paths in order. value sets a static literal.",
+      body: "Template strings use {FieldName} placeholders (Visual: set Source to “Template string”). static value is JSON/JS only. coalesce tries fallback paths in order on simple field rows.",
       examples: [
         {
           title: "Template string",
@@ -1400,6 +1525,14 @@
     );
   }
 
+  function MappingFieldLabel(props) {
+    return h("label", {
+      className: "mapping-field-label" + (props.tooltip ? " mapping-field-label-tip" : ""),
+      "data-tooltip": props.tooltip || undefined,
+      title: props.tooltip || undefined,
+    }, props.children);
+  }
+
   function FormatOptionExtras(props) {
     var field = props.field;
     var onPatch = props.onPatch;
@@ -1580,6 +1713,192 @@
     );
   }
 
+  function CoalescePathsEditor(props) {
+    var value = props.value || "";
+    var onChange = props.onChange;
+    var pathSuggestions = props.pathSuggestions || [];
+    var primarySource = props.primarySource || "";
+    var compact = props.compact;
+    var paths = MF ? (MF.parseCoalesce(value) || []) : [];
+    var _useState = useState(paths.length > 0), expanded = _useState[0], setExpanded = _useState[1];
+
+    useEffect(function () {
+      if (value && String(value).trim()) setExpanded(true);
+    }, [value]);
+
+    function setPaths(next) {
+      onChange(MF ? MF.coalescePathsToText(next) : next.join(", "));
+    }
+
+    function updatePath(index, path) {
+      var next = paths.slice();
+      next[index] = path;
+      setPaths(next);
+    }
+
+    function removePath(index) {
+      var next = paths.slice();
+      next.splice(index, 1);
+      setPaths(next);
+    }
+
+    function addPath() {
+      setExpanded(true);
+      setPaths(paths.concat([""]));
+    }
+
+    function addSuggested(path) {
+      if (!path || paths.indexOf(path) >= 0) return;
+      setExpanded(true);
+      setPaths(paths.concat([path]));
+    }
+
+    var filledCount = paths.filter(function (p) { return p && String(p).trim(); }).length;
+    var pickList = pathSuggestions.filter(function (p) {
+      return p && p !== primarySource && paths.indexOf(p) < 0;
+    }).slice(0, 24);
+
+    return h("div", { className: "coalesce-paths-editor" + (compact ? " coalesce-paths-editor-compact" : "") },
+      h("div", { className: "coalesce-paths-toolbar" },
+        h("button", {
+          type: "button",
+          className: "coalesce-paths-toggle",
+          onClick: function () { setExpanded(!expanded); },
+        },
+          h("span", { className: "coalesce-paths-toggle-icon" }, expanded ? "\u25BE" : "\u25B8"),
+          h(MappingFieldLabel, { tooltip: "Try each path in order; first non-null value wins" }, "Coalesce fallbacks"),
+          h("span", { className: "coalesce-paths-count text-sm text-muted" },
+            filledCount ? filledCount + " path" + (filledCount === 1 ? "" : "s") : "none"
+          )
+        ),
+        h("div", { className: "coalesce-paths-toolbar-actions" },
+          h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: addPath }, "+ Add fallback")
+        )
+      ),
+      expanded ? h("div", { className: "coalesce-paths-body" },
+        paths.length ? null : h("p", { className: "coalesce-paths-empty text-sm text-muted" },
+          "Add alternate source paths used when the primary source is null or missing."
+        ),
+        paths.map(function (path, i) {
+          return h("div", { key: i, className: "coalesce-paths-row" },
+            h("input", {
+              className: "mapping-field-input",
+              type: "text",
+              value: path || "",
+              placeholder: "fallback.path",
+              list: "field-suggestions",
+              title: "Fallback source path",
+              onInput: function (e) { updatePath(i, e.target.value); },
+            }),
+            h("button", {
+              type: "button",
+              className: "btn btn-sm btn-secondary",
+              title: "Remove fallback path",
+              onClick: function () { removePath(i); },
+            }, "\u2715")
+          );
+        }),
+        pickList.length ? h("div", { className: "coalesce-paths-suggestions" },
+          h("span", { className: "text-sm text-muted" }, "Add from data:"),
+          pickList.map(function (p) {
+            return h("button", {
+              key: p,
+              type: "button",
+              className: "btn btn-sm btn-secondary coalesce-suggest-chip",
+              onClick: function () { addSuggested(p); },
+            }, p);
+          })
+        ) : null
+      ) : null
+    );
+  }
+
+  function TemplateStringEditor(props) {
+    var value = props.value || "";
+    var onChange = props.onChange;
+    var pathSuggestions = props.pathSuggestions || [];
+    var compact = props.compact;
+    var _useState = useState(!!String(value).trim()), expanded = _useState[0], setExpanded = _useState[1];
+    var inputRef = useRef(null);
+
+    useEffect(function () {
+      if (String(value).trim()) setExpanded(true);
+    }, [value]);
+
+    function insertField(path) {
+      if (!path) return;
+      var token = "{" + path + "}";
+      var el = inputRef.current;
+      var next;
+      if (el && typeof el.selectionStart === "number") {
+        var start = el.selectionStart;
+        var end = el.selectionEnd;
+        next = value.slice(0, start) + token + value.slice(end);
+      } else {
+        next = value + (value && !/\s$/.test(value) ? " " : "") + token;
+      }
+      onChange(next);
+      setExpanded(true);
+    }
+
+    var placeholders = MF ? MF.extractTemplateFields(value) : [];
+    var pickList = pathSuggestions.filter(function (p) {
+      return p && placeholders.indexOf(p) < 0;
+    }).slice(0, 24);
+
+    return h("div", { className: "template-string-editor" + (compact ? " template-string-editor-compact" : "") },
+      h("div", { className: "template-string-toolbar" },
+        h("button", {
+          type: "button",
+          className: "template-string-toggle",
+          onClick: function () { setExpanded(!expanded); },
+        },
+          h("span", { className: "template-string-toggle-icon" }, expanded ? "\u25BE" : "\u25B8"),
+          h(MappingFieldLabel, {
+            tooltip: "Build text from source fields using {FieldName} placeholders",
+          }, "Template string"),
+          placeholders.length
+            ? h("span", { className: "template-string-count text-sm text-muted" },
+              placeholders.length + " field" + (placeholders.length === 1 ? "" : "s")
+            )
+            : h("span", { className: "template-string-count text-sm text-muted" }, "none")
+        )
+      ),
+      expanded ? h("div", { className: "template-string-body" },
+        h("input", {
+          ref: inputRef,
+          className: "mapping-field-input template-string-input",
+          type: "text",
+          value: value,
+          placeholder: "{Salary} {Status}",
+          onInput: function (e) { onChange(e.target.value); },
+        }),
+        placeholders.length ? h("p", { className: "template-string-placeholders text-sm text-muted" },
+          "Uses: ",
+          placeholders.map(function (p, i) {
+            return h(Fragment, { key: p },
+              i > 0 ? ", " : null,
+              h("code", { className: "template-placeholder-tag" }, "{" + p + "}")
+            );
+          })
+        ) : h("p", { className: "template-string-empty text-sm text-muted" },
+          "Type {FieldName} tokens or insert fields below."
+        ),
+        pickList.length ? h("div", { className: "template-string-suggestions" },
+          h("span", { className: "text-sm text-muted" }, "Insert field:"),
+          pickList.map(function (p) {
+            return h("button", {
+              key: p,
+              type: "button",
+              className: "btn btn-sm btn-secondary template-suggest-chip",
+              onClick: function () { insertField(p); },
+            }, "{" + p + "}")
+          })
+        ) : null
+      ) : null
+    );
+  }
+
   function NestedFieldsEditor(props) {
     var nestedFields = props.fields || [];
     var onChange = props.onChange;
@@ -1635,6 +1954,14 @@
     var inspection = props.inspection;
     var sourceData = props.sourceData;
 
+    var _computeErrState = useState(null);
+    var computeErr = _computeErrState[0];
+    var setComputeErr = _computeErrState[1];
+    var paramLabels = useMemo(function () {
+      if (!MF) return ["a"];
+      return MF.computeParamLabels(field.computeSources || field.source || "");
+    }, [field.computeSources, field.source]);
+
     function update(key, value) {
       var updated = Object.assign({}, field, {});
       updated[key] = value;
@@ -1668,16 +1995,24 @@
     }
 
     var kind = field.kind || "simple";
+    if (kind === "template") {
+      field = Object.assign({}, field, { kind: "simple", sourceMode: "template" });
+      kind = "simple";
+    }
+    var useTemplateMode = MF ? MF.visualFieldUsesTemplate(field) : false;
     var templates = MF ? MF.COMPUTE_TEMPLATES : [];
     var mapEntries = MF ? MF.normalizeMapEntries(field) : [];
     var mapDistinctValues = kind === "simple" && field.source && MF
       ? MF.collectDistinctValuesForPath(sourceData, field.source, inspection)
       : [];
+    var pathSuggestions = inspection ? Object.keys(inspection.fields || {}) : [];
+    var activeComputeTemplate = templates.find(function (t) {
+      return t.id === (field.computeTemplate || "concat");
+    });
 
-    if (kind === "condition" || kind === "template" || kind === "static" || kind === "advanced") {
+    if (kind === "condition" || kind === "static" || kind === "advanced") {
       var kindLabels = {
         condition: "Condition (if/then/else)",
-        template: "Template",
         static: "Static value",
         advanced: "Advanced",
       };
@@ -1710,7 +2045,7 @@
       rowError ? h("div", { className: "mapping-row-error" }, rowError) : null,
       h("div", { className: "mapping-field-row-main" },
         h("div", null,
-          h("label", { className: "mapping-field-label" }, "Target Field"),
+          h(MappingFieldLabel, { tooltip: "Destination field name in the output JSON" }, "Target Field"),
           h("input", {
             className: "mapping-field-input",
             type: "text",
@@ -1719,8 +2054,12 @@
             onInput: function (e) { update("target", e.target.value); },
           })
         ),
-        kind === "simple" || kind === "compute" ? h("div", null,
-          h("label", { className: "mapping-field-label" },
+        kind === "compute" || (kind === "simple" && !useTemplateMode) ? h("div", null,
+          h(MappingFieldLabel, {
+            tooltip: kind === "compute"
+              ? "Comma-separated source paths; bound to parameters a, b, c… in order"
+              : "Dot-path to the source field (e.g. user.email)",
+          },
             kind === "compute" ? "Source Path(s)" : "Source Path"
           ),
           h("input", {
@@ -1734,8 +2073,19 @@
             },
             list: "field-suggestions",
           })
+        ) : kind === "simple" && useTemplateMode ? h("div", null,
+          h(MappingFieldLabel, {
+            tooltip: "Interpolate multiple source fields into one output string",
+          }, "Source"),
+          h("span", { className: "mapping-source-mode-badge" }, "Template string")
         ) : h("div", null,
-          h("label", { className: "mapping-field-label" }, kind === "forEach" ? "Array Path (forEach)" : "Object root"),
+          h(MappingFieldLabel, {
+            tooltip: kind === "forEach"
+              ? "Path to the source array to iterate (forEach)"
+              : "Root path of the nested source object",
+          },
+            kind === "forEach" ? "Array Path (forEach)" : "Object root"
+          ),
           h("input", {
             className: "mapping-field-input",
             type: "text",
@@ -1755,7 +2105,7 @@
       ),
       !hideKindSelect && !compact ? h("div", { className: "mapping-field-options" },
         h("div", null,
-          h("label", { className: "mapping-field-label" }, "Mapping Type"),
+          h(MappingFieldLabel, { tooltip: "How this destination field is populated" }, "Mapping Type"),
           h("select", { value: kind, onChange: function (e) { update("kind", e.target.value); } },
             h("option", { value: "simple" }, "Field map"),
             h("option", { value: "forEach" }, "Array (forEach)"),
@@ -1764,7 +2114,31 @@
           )
         ),
         kind === "simple" ? h("div", null,
-          h("label", { className: "mapping-field-label" }, "Type"),
+          h(MappingFieldLabel, {
+            tooltip: "Single source field, or a template with {FieldName} placeholders",
+          }, "Source"),
+          h("select", {
+            value: field.sourceMode || (useTemplateMode ? "template" : "path"),
+            onChange: function (e) {
+              var mode = e.target.value;
+              var updated = Object.assign({}, field, { sourceMode: mode });
+              if (mode === "template") {
+                if (!String(updated.template || "").trim()) {
+                  updated.template = "";
+                }
+                updated.source = "";
+              } else {
+                updated.template = "";
+              }
+              onChange(index, updated);
+            },
+          },
+            h("option", { value: "path" }, "Single field"),
+            h("option", { value: "template" }, "Template string")
+          )
+        ) : null,
+        kind === "simple" ? h("div", null,
+          h(MappingFieldLabel, { tooltip: "Coerce output to this type when set" }, "Type"),
           h("select", { value: field.type || "auto", onChange: function (e) { update("type", e.target.value); } },
             h("option", { value: "auto" }, "Auto"),
             h("option", { value: "string" }, "String"),
@@ -1774,7 +2148,7 @@
           )
         ) : null,
         kind === "simple" || kind === "compute" ? h("div", null,
-          h("label", { className: "mapping-field-label" }, "Format"),
+          h(MappingFieldLabel, { tooltip: "Transform the source value (case, date, number, etc.)" }, "Format"),
           h("select", {
             value: field.format || "",
             onChange: function (e) {
@@ -1796,18 +2170,8 @@
           )
         ) : null,
         kind === "simple" ? h("div", null,
-          h("label", { className: "mapping-field-label" }, "Default"),
+          h(MappingFieldLabel, { tooltip: "Value used when source and coalesce paths are all null" }, "Default"),
           h("input", { className: "mapping-field-input", type: "text", value: field.default || "", onInput: function (e) { update("default", e.target.value); } })
-        ) : null,
-        kind === "simple" ? h("div", null,
-          h("label", { className: "mapping-field-label" }, "Coalesce"),
-          h("input", {
-            className: "mapping-field-input",
-            type: "text",
-            value: field.coalesce || "",
-            placeholder: "alt.path, other.path",
-            onInput: function (e) { update("coalesce", e.target.value); },
-          })
         ) : null
       ) : null,
       kind === "simple" ? h(FormatOptionExtras, {
@@ -1824,26 +2188,66 @@
         distinctValues: mapDistinctValues,
         compact: compact,
       }) : null,
-      kind === "compute" && !compact ? h("div", { className: "mapping-field-options" },
+      kind === "simple" && useTemplateMode ? h(TemplateStringEditor, {
+        value: field.template || "",
+        onChange: function (v) { update("template", v); },
+        pathSuggestions: pathSuggestions,
+        compact: compact,
+      }) : null,
+      kind === "simple" && !useTemplateMode ? h(CoalescePathsEditor, {
+        value: field.coalesce || "",
+        onChange: function (v) { update("coalesce", v); },
+        pathSuggestions: pathSuggestions,
+        primarySource: field.source || "",
+        compact: compact,
+      }) : null,
+      kind === "compute" && !compact ? h("div", { className: "mapping-field-options mapping-compute-panel" },
         h("div", null,
-          h("label", { className: "mapping-field-label" }, "Template"),
+          h(MappingFieldLabel, { tooltip: "Starter expression; edit the code below" }, "Template"),
           h("select", {
             value: field.computeTemplate || "concat",
-            onChange: function (e) { update("computeTemplate", e.target.value); },
+            onChange: function (e) {
+              update("computeTemplate", e.target.value);
+              setComputeErr(null);
+            },
           },
             templates.map(function (t) {
               return h("option", { key: t.id, value: t.id }, t.label);
             })
-          )
+          ),
+          activeComputeTemplate && activeComputeTemplate.sourceHint
+            ? h("p", { className: "mapping-compute-hint text-sm text-muted" }, activeComputeTemplate.sourceHint)
+            : null
         ),
         h("div", { className: "mapping-compute-code-wrap" },
-          h("label", { className: "mapping-field-label" }, "Expression (use a, b, c…)"),
+          h(MappingFieldLabel, {
+            tooltip: "Sandboxed JS body; must return a value. Parameters match source paths in order.",
+          },
+            "Expression"
+          ),
+          h("p", { className: "mapping-compute-params text-sm text-muted" },
+            "Parameters: ",
+            paramLabels.map(function (name, i) {
+              return h(Fragment, { key: name },
+                i > 0 ? ", " : null,
+                h("code", { className: "mapping-param-name" }, name)
+              );
+            })
+          ),
           h("textarea", {
-            className: "mapping-compute-code",
+            className: "mapping-compute-code" + (computeErr ? " has-error" : ""),
             value: field.computeCode || "",
-            rows: 3,
-            onInput: function (e) { update("computeCode", e.target.value); },
-          })
+            rows: 4,
+            onInput: function (e) {
+              update("computeCode", e.target.value);
+              if (computeErr) setComputeErr(null);
+            },
+            onBlur: function () {
+              if (!MF) return;
+              setComputeErr(MF.validateComputeExpression(field.computeCode || ""));
+            },
+          }),
+          computeErr ? h("div", { className: "mapping-compute-error" }, computeErr) : null
         )
       ) : null,
       (kind === "forEach" || kind === "nested") && !compact ? h("div", { className: "mapping-nested-block" },
@@ -1905,7 +2309,10 @@
 
     return h("div", { className: "mapping-editor" },
       h("div", { className: "mapping-toolbar" },
-        h("label", { className: "mapping-passthrough" },
+        h("label", {
+          className: "mapping-passthrough",
+          "data-tooltip": "Copy source fields that have no explicit mapping row",
+        },
           h("input", {
             type: "checkbox",
             checked: !!passthrough,
@@ -1919,7 +2326,7 @@
         validationErrors.length + " mapping issue(s) — check highlighted rows"
       ) : null,
       fields.some(function (f) {
-        return f.kind === "advanced" || f.kind === "condition" || f.kind === "template" || f.kind === "static";
+        return f.kind === "advanced" || f.kind === "condition" || f.kind === "static";
       })
         ? h("div", { className: "mapping-readonly-hint" },
             "Condition and advanced rules are shown read-only. Edit them in JS/JSON mode; simple field rows remain editable here."

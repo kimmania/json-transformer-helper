@@ -5,7 +5,8 @@ A standalone static web app for building [json-transformer](https://github.com/k
 ## Features
 
 ### Core Functionality
-- **Visual Mapping Editor** — Field map, array (`forEach`), nested object, and compute mappings; coalesce, value maps, passthrough toggle, validation hints
+- **Visual Mapping Editor** — Field map, template strings (`{Field}`), array (`forEach`), nested object, and compute mappings; coalesce fallback picker, value maps, format pickers, passthrough toggle, validation hints
+- **Source tree** — Search with highlights, one-record vs all-records view, go-to-record navigation, sample values on fields
 - **Compute Templates** — Pre-built expressions (concat, arithmetic, etc.) plus custom JS with sandboxed preview
 - **Source Data Tree Viewer** — Collapsible tree with search, sample values, click-to-copy paths
 - **Live Preview** — Debounced preview (first N records), expected-output diff, record navigation

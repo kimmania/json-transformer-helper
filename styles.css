@@ -321,6 +321,8 @@ input:focus, select:focus, textarea:focus {
   max-width: 640px;
   flex-shrink: 0;
   border-right: none;
+  position: relative;
+  z-index: 1;
 }
 
 .source-panel-body {
@@ -481,6 +483,8 @@ input:focus, select:focus, textarea:focus {
   flex: 1 1 0;
   min-width: 300px;
   min-height: 0;
+  position: relative;
+  z-index: 20;
 }
 
 .panel-preview {
@@ -997,6 +1001,271 @@ input:focus, select:focus, textarea:focus {
   font-weight: 400;
   text-transform: none;
   letter-spacing: normal;
+}
+
+.coalesce-paths-editor {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+
+.coalesce-paths-editor-compact {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.coalesce-paths-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.coalesce-paths-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.coalesce-paths-toggle:hover .mapping-field-label {
+  color: var(--accent);
+}
+
+.coalesce-paths-toggle-icon {
+  width: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.coalesce-paths-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.coalesce-paths-body {
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.coalesce-paths-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.coalesce-paths-row + .coalesce-paths-row {
+  margin-top: 6px;
+}
+
+.coalesce-paths-empty {
+  margin: 0 0 8px;
+}
+
+.coalesce-paths-count {
+  font-weight: 400;
+}
+
+.coalesce-paths-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.coalesce-suggest-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.source-record-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.source-view-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.source-record-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-record-goto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.source-record-input {
+  width: 52px;
+  padding: 2px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.source-record-hint {
+  flex: 1;
+  text-align: right;
+}
+
+.tree-node-content.tree-search-match {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.tree-search-mark {
+  background: color-mix(in srgb, var(--warning, #e6a700) 45%, transparent);
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+.mapping-compute-panel {
+  grid-column: 1 / -1;
+}
+
+.mapping-compute-hint {
+  margin: 4px 0 0;
+}
+
+.mapping-compute-params {
+  margin: 4px 0 6px;
+}
+
+.mapping-param-name {
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.mapping-compute-code.has-error {
+  border-color: var(--danger, #c62828);
+}
+
+.mapping-compute-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--danger, #c62828);
+}
+
+.mapping-source-mode-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.template-string-editor {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+
+.template-string-editor-compact {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.template-string-toolbar {
+  margin-bottom: 8px;
+}
+
+.template-string-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.template-string-toggle:hover .mapping-field-label {
+  color: var(--accent);
+}
+
+.template-string-toggle-icon {
+  width: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.template-string-body {
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.template-string-input {
+  width: 100%;
+  font-family: var(--font-mono);
+}
+
+.template-string-placeholders,
+.template-string-empty {
+  margin: 8px 0 0;
+}
+
+.template-placeholder-tag {
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.template-string-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.template-suggest-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.template-string-count {
+  font-weight: 400;
 }
 
 .format-option-extras {
@@ -2132,10 +2401,38 @@ input:focus, select:focus, textarea:focus {
   pointer-events: none;
   transition: opacity var(--transition);
   z-index: 100;
+  box-shadow: var(--shadow-md);
 }
 
 [data-tooltip]:hover::after {
   opacity: 1;
+}
+
+/* Mapping panel: tooltips below labels, above adjacent source panel */
+.panel-mapping [data-tooltip]::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+  left: 0;
+  transform: none;
+  white-space: normal;
+  max-width: min(320px, 90vw);
+  text-align: left;
+  z-index: 10050;
+}
+
+.panel-mapping .mapping-field-row {
+  overflow: visible;
+}
+
+.panel-mapping .mapping-editor,
+.panel-mapping .mapping-editor-scroll {
+  overflow-x: visible;
+}
+
+.mapping-field-label-tip {
+  cursor: help;
+  text-decoration: underline dotted var(--text-muted);
+  text-underline-offset: 2px;
 }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────── */

@@ -130,6 +130,8 @@
       precision: "",
       default: "",
       kind: "simple",
+      sourceMode: "path",
+      template: "",
       coalesce: "",
       mapPairs: "",
       mapEntries: [],
@@ -249,6 +251,27 @@
     return String(text).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
   }
 
+  function coalescePathsToText(paths) {
+    if (!paths || !paths.length) return "";
+    return paths.map(function (p) { return String(p).trim(); }).filter(Boolean).join(", ");
+  }
+
+  function validateComputeExpression(code) {
+    if (!code || !String(code).trim()) return null;
+    try {
+      makeComputeFn(code);
+      return null;
+    } catch (e) {
+      return e && e.message ? e.message : String(e);
+    }
+  }
+
+  function computeParamLabels(sourcesText) {
+    var paths = parseSourceList(sourcesText);
+    var count = paths.length || 1;
+    return COMPUTE_PARAM_NAMES.slice(0, Math.min(count, COMPUTE_PARAM_NAMES.length));
+  }
+
   function parseSourceList(text) {
     if (!text || !String(text).trim()) return [];
     return String(text).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
@@ -263,9 +286,32 @@
     return global.JsonTransformer.compileCompute(code);
   }
 
+  function visualFieldUsesTemplate(f) {
+    if (!f) return false;
+    if (f.sourceMode === "template") return true;
+    return !!(f.template && String(f.template).trim());
+  }
+
+  function extractTemplateFields(template) {
+    if (!template) return [];
+    var re = /\{([^}]+)\}/g;
+    var out = [];
+    var match;
+    while ((match = re.exec(String(template))) !== null) {
+      var path = String(match[1]).trim();
+      if (path && out.indexOf(path) < 0) out.push(path);
+    }
+    return out;
+  }
+
   function buildSimpleFieldDef(f) {
     var fieldDef = {};
-    if (f.source) fieldDef.from = f.source;
+    if (visualFieldUsesTemplate(f)) {
+      fieldDef.template = String(f.template).trim();
+    }
+    if (f.source && String(f.source).trim() && !visualFieldUsesTemplate(f)) {
+      fieldDef.from = f.source;
+    }
     if (f.type && f.type !== "auto") fieldDef.type = f.type;
     if (f.format) fieldDef.format = f.format;
     if (f.outputFormat) fieldDef.outputFormat = f.outputFormat;
@@ -273,7 +319,6 @@
       fieldDef.precision = Number(f.precision);
     }
     if (f.default !== undefined && f.default !== "") fieldDef.default = f.default;
-    if (f.template) fieldDef.template = f.template;
     if (f.value !== undefined && f.value !== "") fieldDef.value = f.value;
     var coalesce = parseCoalesce(f.coalesce);
     if (coalesce && coalesce.length) fieldDef.coalesce = coalesce;
@@ -286,7 +331,7 @@
   function fieldDefIsAdvanced(def) {
     if (!def || typeof def !== "object") return false;
     if (def.if || def.and || def.or || def.not) return true;
-    if (def.template !== undefined || "value" in def) return true;
+    if ("value" in def && def.from === undefined && def.template === undefined && !def.coalesce) return true;
     if (def.groupBy || def.flatten || def.filter || def.distinct || def.sortBy) return true;
     if (typeof def.compute === "function" || typeof def.compute === "string") return true;
     if (def.fields) {
@@ -394,7 +439,7 @@
       return fieldDef;
     }
 
-    if (!f.source && !parseCoalesce(f.coalesce)) return null;
+    if (!f.source && !parseCoalesce(f.coalesce) && !visualFieldUsesTemplate(f)) return null;
     return buildSimpleFieldDef(f);
   }
 
@@ -433,11 +478,7 @@
       return readonlyVisualFieldFromDef(target, def, "condition");
     }
 
-    if (def.template !== undefined) {
-      return readonlyVisualFieldFromDef(target, def, "template");
-    }
-
-    if ("value" in def && !def.from && !def.coalesce) {
+    if ("value" in def && !def.from && !def.coalesce && def.template === undefined) {
       return readonlyVisualFieldFromDef(target, def, "static");
     }
 
@@ -479,6 +520,7 @@
     var vf = defaultVisualField({
       target: target,
       kind: "simple",
+      sourceMode: def.template !== undefined && !def.from ? "template" : "path",
       source: Array.isArray(def.from) ? def.from[0] : (def.from || ""),
       type: def.type || "auto",
       format: def.format || "",
@@ -499,7 +541,7 @@
     options = options || {};
     var out = {};
     (fields || []).forEach(function (f) {
-      if (!f.target || f.kind === "advanced" || f.kind === "condition" || f.kind === "template" || f.kind === "static") return;
+      if (!f.target || f.kind === "advanced" || f.kind === "condition" || f.kind === "static") return;
       var def = visualFieldToDef(f);
       if (def) out[f.target] = def;
     });
@@ -512,7 +554,7 @@
     options = options || {};
     var baseFields = (baseMapping && baseMapping.fields) ? baseMapping.fields : {};
     var mergedFields = {};
-    var readonlyKinds = { advanced: true, condition: true, template: true, static: true };
+    var readonlyKinds = { advanced: true, condition: true, static: true };
 
     (visualFields || []).forEach(function (f) {
       if (!f.target) return;
@@ -597,7 +639,9 @@
       if (f.kind === "simple" || f.kind === "compute") {
         var paths = f.kind === "compute"
           ? parseSourceList(f.computeSources || f.source)
-          : [f.source].concat(parseCoalesce(f.coalesce) || []);
+          : visualFieldUsesTemplate(f)
+            ? extractTemplateFields(f.template)
+            : [f.source].concat(parseCoalesce(f.coalesce) || []);
         paths.filter(Boolean).forEach(function (p) {
           if (sourceData && !pathExistsInData(sourceData, p)) {
             errors.push({
@@ -721,6 +765,12 @@
     getSampleValuesForPath: getSampleValuesForPath,
     diffRecords: diffRecords,
     parseSourceList: parseSourceList,
+    parseCoalesce: parseCoalesce,
+    coalescePathsToText: coalescePathsToText,
+    visualFieldUsesTemplate: visualFieldUsesTemplate,
+    extractTemplateFields: extractTemplateFields,
+    validateComputeExpression: validateComputeExpression,
+    computeParamLabels: computeParamLabels,
     normalizeMapEntries: normalizeMapEntries,
     mapEntriesToObject: mapEntriesToObject,
     collectDistinctValuesForPath: collectDistinctValuesForPath,

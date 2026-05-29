@@ -1145,6 +1145,78 @@ input:focus, select:focus, textarea:focus {
   min-height: 240px;
 }
 
+.syntax-editor {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 320px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.syntax-editor-highlight,
+.syntax-editor-input {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+  border: none;
+  border-radius: 0;
+  white-space: pre;
+  word-wrap: normal;
+  overflow-wrap: normal;
+}
+
+.syntax-editor-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  pointer-events: none;
+  color: var(--text-primary);
+}
+
+.syntax-editor-highlight code {
+  display: block;
+  min-height: 100%;
+}
+
+.syntax-editor-input {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  resize: vertical;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-primary);
+  overflow: auto;
+}
+
+.syntax-editor-input.error {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.hl-key { color: #0550ae; }
+.hl-string { color: #0a7a3e; }
+.hl-number { color: #953800; }
+.hl-boolean { color: #8250df; }
+.hl-null { color: #8250df; }
+.hl-keyword { color: #cf222e; }
+.hl-comment { color: var(--text-muted); font-style: italic; }
+.hl-punct { color: var(--text-muted); }
+.hl-error-line { background: rgba(220, 53, 69, 0.18); display: inline-block; width: 100%; }
+
+[data-theme="dark"] .hl-key { color: #79c0ff; }
+[data-theme="dark"] .hl-string { color: #7ee787; }
+[data-theme="dark"] .hl-number { color: #ffa657; }
+[data-theme="dark"] .hl-boolean,
+[data-theme="dark"] .hl-null { color: #d2a8ff; }
+[data-theme="dark"] .hl-keyword { color: #ff7b72; }
+
 /* ── Code Editor ───────────────────────────────────────────────────── */
 
 .code-editor {
@@ -1183,6 +1255,91 @@ input:focus, select:focus, textarea:focus {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+  margin: 0;
+}
+
+.preview-output-annotated {
+  white-space: normal;
+}
+
+.preview-json-line {
+  display: flex;
+  gap: 8px;
+  white-space: pre;
+}
+
+.preview-line-gutter {
+  flex: 0 0 16px;
+  color: var(--danger);
+  text-align: center;
+}
+
+.preview-line-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-line-error {
+  background: rgba(220, 53, 69, 0.12);
+  border-radius: 2px;
+}
+
+.preview-line-error .preview-line-text {
+  color: var(--danger);
+}
+
+.preview-record-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-inline-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: rgba(220, 53, 69, 0.08);
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.preview-inline-error-icon {
+  flex: 0 0 auto;
+}
+
+.preview-output-muted {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.preview-error-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: rgba(220, 53, 69, 0.08);
+  color: var(--danger);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.preview-error-clickable {
+  cursor: pointer;
+}
+
+.preview-error-clickable:hover:not(:disabled) {
+  background: rgba(220, 53, 69, 0.16);
+}
+
+.preview-error-item:disabled {
+  opacity: 0.85;
+  cursor: default;
 }
 
 .preview-record-nav {
@@ -1574,6 +1731,24 @@ input:focus, select:focus, textarea:focus {
   font-size: 12px;
   color: var(--danger);
   margin-top: 4px;
+}
+
+.validation-warning {
+  margin-top: 4px;
+  padding: 6px 10px;
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid var(--warning, #ffc107);
+  border-radius: var(--radius-sm);
+}
+
+.validation-warning-line {
+  font-size: 12px;
+  color: var(--warning-text, #856404);
+  margin-bottom: 2px;
+}
+
+[data-theme="dark"] .validation-warning-line {
+  color: #ffd666;
 }
 
 .validation-ok {

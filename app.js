@@ -1279,15 +1279,269 @@
 
   // ── Code Editor (Free-form) ────────────────────────────────────────
 
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function highlightJson(text) {
+    var escaped = escapeHtml(text);
+    return escaped.replace(
+      /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g,
+      function (match, str, colon) {
+        if (str) {
+          if (colon) {
+            return '<span class="hl-key">' + str + '</span><span class="hl-punct">:</span>';
+          }
+          return '<span class="hl-string">' + str + '</span>';
+        }
+        if (/^null$/.test(match)) return '<span class="hl-null">' + match + "</span>";
+        if (/true|false/.test(match)) return '<span class="hl-boolean">' + match + "</span>";
+        return '<span class="hl-number">' + match + "</span>";
+      }
+    );
+  }
+
+  function highlightJavaScript(text) {
+    var out = "";
+    var i = 0;
+    var len = text.length;
+    var keywords = {
+      export: 1, default: 1, function: 1, return: 1, const: 1, let: 1, var: 1,
+      if: 1, else: 1, for: 1, while: 1, switch: 1, case: 1, break: 1, continue: 1,
+      new: 1, typeof: 1, true: 1, false: 1, null: 1, undefined: 1, async: 1, await: 1,
+    };
+
+    function append(str, cls) {
+      out += cls ? ('<span class="' + cls + '">' + str + "</span>") : escapeHtml(str);
+    }
+
+    while (i < len) {
+      var ch = text.charAt(i);
+
+      if (ch === "/" && text.charAt(i + 1) === "/") {
+        var end = text.indexOf("\n", i);
+        if (end < 0) end = len;
+        append(text.slice(i, end), "hl-comment");
+        i = end;
+        continue;
+      }
+      if (ch === "/" && text.charAt(i + 1) === "*") {
+        var endBlock = text.indexOf("*/", i + 2);
+        if (endBlock < 0) endBlock = len - 2;
+        append(text.slice(i, endBlock + 2), "hl-comment");
+        i = endBlock + 2;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === "`") {
+        var j = i + 1;
+        while (j < len) {
+          if (text.charAt(j) === "\\") { j += 2; continue; }
+          if (text.charAt(j) === ch) { j++; break; }
+          j++;
+        }
+        append(text.slice(i, j), "hl-string");
+        i = j;
+        continue;
+      }
+      if (/[0-9]/.test(ch) || (ch === "-" && /[0-9]/.test(text.charAt(i + 1)))) {
+        var k = i + 1;
+        while (k < len && /[0-9.eE+-]/.test(text.charAt(k))) k++;
+        append(text.slice(i, k), "hl-number");
+        i = k;
+        continue;
+      }
+      if (/[A-Za-z_$]/.test(ch)) {
+        var w = i + 1;
+        while (w < len && /[\w$]/.test(text.charAt(w))) w++;
+        var word = text.slice(i, w);
+        append(word, keywords[word] ? "hl-keyword" : null);
+        i = w;
+        continue;
+      }
+
+      append(ch, /[{}\[\](),:]/.test(ch) ? "hl-punct" : null);
+      i++;
+    }
+    return out;
+  }
+
+  function wrapErrorLineHtml(html, errorLine) {
+    if (!errorLine || !errorLine.line) return html;
+    var lines = html.split("\n");
+    var idx = errorLine.line - 1;
+    if (idx >= 0 && idx < lines.length) {
+      lines[idx] = '<span class="hl-error-line">' + lines[idx] + "</span>";
+    }
+    return lines.join("\n");
+  }
+
+  function getParseErrorLocation(text, err) {
+    if (!err || !text) return null;
+    var msg = err.message || String(err);
+    var lineMatch = msg.match(/line (\d+)/i);
+    var colMatch = msg.match(/column (\d+)/i);
+    if (lineMatch) {
+      return {
+        line: parseInt(lineMatch[1], 10),
+        col: colMatch ? parseInt(colMatch[1], 10) : 1,
+      };
+    }
+    var posMatch = msg.match(/position (\d+)/i);
+    if (posMatch) {
+      var pos = parseInt(posMatch[1], 10);
+      var line = 1;
+      var col = 1;
+      for (var i = 0; i < pos && i < text.length; i++) {
+        if (text.charAt(i) === "\n") {
+          line++;
+          col = 1;
+        } else {
+          col++;
+        }
+      }
+      return { line: line, col: col };
+    }
+    return null;
+  }
+
+  function parsePreviewTransformError(message, row) {
+    var fieldMatch = String(message).match(/field "([^"]+)"/);
+    return {
+      row: row,
+      field: fieldMatch ? fieldMatch[1] : null,
+      message: String(message).replace(/^row \d+:\s*/i, ""),
+    };
+  }
+
+  function previewErrorsForRecord(errors, recordIndex) {
+    return (errors || []).filter(function (err) {
+      return err.row == null || err.row === recordIndex;
+    });
+  }
+
+  function previewErrorKeysForRecord(errors, recordIndex) {
+    var keys = {};
+    previewErrorsForRecord(errors, recordIndex).forEach(function (err) {
+      if (!err.field) return;
+      keys[err.field] = err.message || "error";
+      err.field.split(".").reduce(function (prefix, part) {
+        var path = prefix ? prefix + "." + part : part;
+        keys[path] = err.message || "error";
+        return path;
+      }, "");
+    });
+    return keys;
+  }
+
+  function previewLineErrorInfo(line, highlightKeys) {
+    var match = line.match(/^\s*"([^"]+)"\s*:/);
+    if (!match) return null;
+    var key = match[1];
+    if (highlightKeys[key]) return { key: key, message: highlightKeys[key] };
+    return null;
+  }
+
+  function SyntaxEditor(props) {
+    var value = props.value;
+    var onChange = props.onChange;
+    var mode = props.mode;
+    var hasError = props.hasError;
+    var errorLine = props.errorLine;
+    var textareaRef = useRef(null);
+    var preRef = useRef(null);
+
+    var highlighted = useMemo(function () {
+      var html = mode === "json" ? highlightJson(value) : highlightJavaScript(value);
+      return wrapErrorLineHtml(html, errorLine);
+    }, [value, mode, errorLine]);
+
+    function syncScroll() {
+      if (!textareaRef.current || !preRef.current) return;
+      preRef.current.scrollTop = textareaRef.current.scrollTop;
+      preRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+
+    useEffect(function () {
+      syncScroll();
+    }, [value, highlighted]);
+
+    return h("div", { className: "syntax-editor" },
+      h("pre", {
+        ref: preRef,
+        className: "syntax-editor-highlight",
+        "aria-hidden": "true",
+      }, h("code", { dangerouslySetInnerHTML: { __html: highlighted + "\n" } })),
+      h("textarea", {
+        ref: textareaRef,
+        className: "syntax-editor-input code-editor" + (hasError ? " error" : ""),
+        value: value,
+        onInput: function (e) { onChange(e.target.value); },
+        onScroll: syncScroll,
+        spellcheck: false,
+      })
+    );
+  }
+
+  function PreviewJsonDisplay(props) {
+    var record = props.record;
+    var errors = props.errors || [];
+    var recordIndex = props.recordIndex || 0;
+
+    if (!record) return null;
+
+    if (record.__transformError) {
+      return h("div", { className: "preview-record-error" },
+        h("div", { className: "preview-inline-error" },
+          h("span", { className: "preview-inline-error-icon" }, "\u26A0"),
+          h("span", null, record.__transformError)
+        ),
+        h("pre", { className: "preview-output preview-output-muted" },
+          "// Record " + (recordIndex + 1) + " failed to transform"
+        )
+      );
+    }
+
+    var highlightKeys = previewErrorKeysForRecord(errors, recordIndex);
+    var jsonText = JSON.stringify(record, null, 2);
+    var lines = jsonText.split("\n");
+    var hasInline = Object.keys(highlightKeys).length > 0;
+
+    if (!hasInline) {
+      return h("pre", { className: "preview-output" }, jsonText);
+    }
+
+    return h("pre", { className: "preview-output preview-output-annotated" },
+      lines.map(function (line, i) {
+        var info = previewLineErrorInfo(line, highlightKeys);
+        return h("div", {
+          key: i,
+          className: "preview-json-line" + (info ? " preview-line-error" : ""),
+          title: info ? info.message : undefined,
+        },
+          h("span", { className: "preview-line-gutter" }, info ? "\u26A0" : " "),
+          h("span", { className: "preview-line-text" }, line || " ")
+        );
+      })
+    );
+  }
+
   function CodeEditor(props) {
     var mode = props.mode; // "json" or "js"
     var value = props.value;
     var onChange = props.onChange;
+    var inspection = props.inspection;
     var _useState = useState(""), error = _useState[0], setError = _useState[1];
+    var _useState2 = useState(null), errorLine = _useState2[0], setErrorLine = _useState2[1];
+    var _useState3 = useState([]), warnings = _useState3[0], setWarnings = _useState3[1];
 
     function validateText(text) {
       if (!text || !String(text).trim()) {
         setError("");
+        setErrorLine(null);
+        setWarnings([]);
         return;
       }
       if (mode === "json") {
@@ -1298,6 +1552,38 @@
         new Function("return (" + text + ")")();
       }
       setError("");
+      setErrorLine(null);
+      setWarnings(collectSemanticWarnings(text, mode, inspection));
+    }
+
+    function collectSemanticWarnings(text, editorMode, insp) {
+      if (!insp || !MF) return [];
+      var mapping;
+      try {
+        mapping = editorMode === "json" ? JSON.parse(text) : MF.parseMappingModule(text);
+      } catch (e) {
+        return [];
+      }
+      if (!mapping || !mapping.fields) return [];
+      var known = insp.fields || {};
+      var warns = [];
+      function checkFrom(path, target) {
+        if (!path || known[path]) return;
+        warns.push('Source path "' + path + '" for "' + target + '" not found in loaded data');
+      }
+      function walkFields(fields, prefix) {
+        Object.keys(fields || {}).forEach(function (target) {
+          var def = fields[target];
+          if (!def || typeof def !== "object") return;
+          if (def.from) {
+            if (Array.isArray(def.from)) def.from.forEach(function (p) { checkFrom(p, target); });
+            else checkFrom(def.from, target);
+          }
+          if (def.fields) walkFields(def.fields, prefix ? prefix + "." + target : target);
+        });
+      }
+      walkFields(mapping.fields, "");
+      return warns.slice(0, 8);
     }
 
     useEffect(function () {
@@ -1305,16 +1591,19 @@
         validateText(value);
       } catch (e) {
         setError(e.message);
+        setErrorLine(getParseErrorLocation(value, e));
+        setWarnings([]);
       }
-    }, [value, mode]);
+    }, [value, mode, inspection]);
 
-    function handleInput(e) {
-      var text = e.target.value;
+    function handleChange(text) {
       onChange(text);
       try {
         validateText(text);
       } catch (e) {
         setError(e.message);
+        setErrorLine(getParseErrorLocation(text, e));
+        setWarnings([]);
       }
     }
 
@@ -1322,10 +1611,21 @@
       try {
         var parsed = JSON.parse(value);
         var formatted = JSON.stringify(parsed, null, 2);
-        onChange(formatted);
-        setError("");
+        handleChange(formatted);
       } catch (e) {
         setError("Cannot format: " + e.message);
+        setErrorLine(getParseErrorLocation(value, e));
+      }
+    }
+
+    function formatJs() {
+      if (!MF) return;
+      try {
+        var parsed = MF.parseMappingModule(value);
+        handleChange(MF.formatMappingAsModule(parsed, true));
+      } catch (e) {
+        setError("Cannot format: " + e.message);
+        setErrorLine(getParseErrorLocation(value, e));
       }
     }
 
@@ -1336,7 +1636,11 @@
       h("div", { className: "flex justify-between items-center mb-1" },
         h("span", { className: "font-bold text-sm" }, mode === "json" ? "JSON Mapping" : "JS Mapping"),
         h("div", { className: "flex gap-1" },
-          mode === "json" ? h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: formatJson }, "Format") : null,
+          h("button", {
+            type: "button",
+            className: "btn btn-sm btn-secondary",
+            onClick: mode === "json" ? formatJson : formatJs,
+          }, "Format"),
           h("button", {
             type: "button",
             className: "btn btn-sm btn-secondary",
@@ -1344,14 +1648,25 @@
           }, "Copy")
         )
       ),
-      h("textarea", {
-        className: "code-editor" + (error ? " error" : ""),
+      h(SyntaxEditor, {
         value: value,
-        onInput: handleInput,
-        spellcheck: false,
+        onChange: handleChange,
+        mode: mode,
+        hasError: !!error,
+        errorLine: errorLine,
       }),
-      error ? h("div", { className: "validation-error" }, "\u26A0 " + error) : null,
-      !error && value.trim() ? h("div", { className: "validation-ok" }, "\u2713 Valid " + mode.toUpperCase()) : null
+      error ? h("div", { className: "validation-error" },
+        "\u26A0 " + error +
+        (errorLine ? " (line " + errorLine.line + (errorLine.col ? ", column " + errorLine.col : "") + ")" : "")
+      ) : null,
+      !error && warnings.length ? h("div", { className: "validation-warning" },
+        warnings.map(function (w, i) {
+          return h("div", { key: i, className: "validation-warning-line" }, "\u26A0 " + w);
+        })
+      ) : null,
+      !error && !warnings.length && value.trim()
+        ? h("div", { className: "validation-ok" }, "\u2713 Valid " + mode.toUpperCase())
+        : null
     );
   }
 
@@ -1436,7 +1751,11 @@
           diffLines.map(function (line, i) {
             return h("div", { key: i, className: "diff-line diff-" + line.type }, line.text);
           })
-        ) : output ? h("pre", { className: "preview-output" }, JSON.stringify(actual, null, 2))
+        ) : output ? h(PreviewJsonDisplay, {
+          record: actual,
+          errors: errors,
+          recordIndex: recordIndex,
+        })
           : h("div", { className: "empty-state" },
               h("div", { className: "empty-state-icon" }, "\uD83D\uDCC1"),
               h("div", { className: "empty-state-text" }, "No output yet"),
@@ -1445,9 +1764,17 @@
         errors && errors.length > 0 ? h("div", { className: "preview-errors" },
           h("div", { className: "font-bold text-sm mb-1" }, "Errors"),
           errors.map(function (err, i) {
-            return h("div", { key: i, className: "validation-error mb-1" },
-              (err.row != null ? "Row " + err.row + ": " : "") +
-              (err.field ? err.field + " - " : "") +
+            var canJump = err.row != null && Array.isArray(output) && output.length > 1;
+            return h("button", {
+              key: i,
+              type: "button",
+              className: "preview-error-item" + (canJump ? " preview-error-clickable" : ""),
+              disabled: !canJump,
+              onClick: canJump ? function () { setRecordIndex(err.row); } : undefined,
+              title: canJump ? "Jump to record " + (err.row + 1) : undefined,
+            },
+              (err.row != null ? "Record " + (err.row + 1) + ": " : "") +
+              (err.field ? err.field + " — " : "") +
               (err.message || "error")
             );
           })
@@ -2374,18 +2701,29 @@
           }
 
           var ready = JsonTransformer.prepareMapping(mapping);
-
-          if (ready.schema) {
-            var validation = JsonTransformer.validate(sourceData, ready);
-            setPreviewErrors(validation.errors || []);
-          } else {
-            setPreviewErrors([]);
-          }
-
           var previewData = Array.isArray(sourceData)
             ? sourceData.slice(0, previewLimit)
-            : sourceData;
-          var result = JsonTransformer.transform(previewData, ready);
+            : [sourceData];
+          var schemaErrors = [];
+          if (ready.schema) {
+            var validation = JsonTransformer.validate(previewData, ready);
+            schemaErrors = validation.errors || [];
+          }
+
+          var transformErrors = [];
+          var result = previewData.map(function (row, ri) {
+            try {
+              return JsonTransformer.transformOne(row, ready);
+            } catch (ex) {
+              var parsed = parsePreviewTransformError(ex.message, ri);
+              transformErrors.push(parsed);
+              return {
+                __transformError: parsed.message,
+                __row: ri,
+              };
+            }
+          });
+          setPreviewErrors(schemaErrors.concat(transformErrors));
           setPreviewOutput(result);
         } catch (e) {
           setPreviewOutput(null);
@@ -2475,6 +2813,33 @@
       }
       downloadFile(content, filename, mimeType);
       showToast("Mapping exported as " + filename, "success");
+    }
+
+    function copyMapping() {
+      var mapping;
+      try {
+        mapping = resolveActiveMapping(
+          editorMode,
+          mappingFields,
+          codeEditorValue,
+          passthrough,
+          mappingMeta,
+          codeSnapshotRef.current
+        );
+      } catch (e) {
+        showToast("Cannot copy: invalid mapping (" + e.message + ")", "error");
+        return;
+      }
+      if (!mapping || !mapping.fields || Object.keys(mapping.fields).length === 0) {
+        showToast("No mapping to copy", "warning");
+        return;
+      }
+      var useJs = editorMode === "js" || mappingHasCompute(mapping);
+      var content = useJs
+        ? MF.formatMappingAsModule(mapping, true)
+        : JSON.stringify(mapping, null, 2);
+      copyToClipboard(content);
+      showToast("Mapping copied to clipboard", "success");
     }
 
     function exportOutput() {
@@ -2864,6 +3229,11 @@
           h("button", { className: "btn btn-primary", onClick: exportMapping }, "\uD83D\uDCE4 Export"),
           h("button", {
             className: "btn btn-secondary",
+            onClick: copyMapping,
+            title: "Copy mapping JSON/JS to clipboard",
+          }, "Copy mapping"),
+          h("button", {
+            className: "btn btn-secondary",
             onClick: exportOutput,
             disabled: !previewOutput,
           }, "\uD83D\uDCE4 Output"),
@@ -2947,6 +3317,7 @@
                     value: codeEditorValue,
                     onChange: handleCodeEditorChange,
                     fieldSummary: mappingFieldSummary,
+                    inspection: inspection,
                   })
             )
           )

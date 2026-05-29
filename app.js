@@ -782,10 +782,132 @@
 
   // ── Mapping Editor (Table-based) ───────────────────────────────────
 
+  function MapPairsEditor(props) {
+    var entries = props.entries || [];
+    var onChange = props.onChange;
+    var distinctValues = props.distinctValues || [];
+    var compact = props.compact;
+    var _useState = useState(entries.length > 0), expanded = _useState[0], setExpanded = _useState[1];
+
+    useEffect(function () {
+      if (entries.length > 0) setExpanded(true);
+    }, [entries.length]);
+
+    function setEntries(next) {
+      onChange(next);
+    }
+
+    function updateEntry(index, patch) {
+      var next = entries.slice();
+      next[index] = Object.assign({}, next[index], patch);
+      setEntries(next);
+    }
+
+    function removeEntry(index) {
+      var next = entries.slice();
+      next.splice(index, 1);
+      setEntries(next);
+    }
+
+    function addEntry() {
+      setExpanded(true);
+      setEntries(entries.concat([{ key: "", value: "" }]));
+    }
+
+    function addFromSampleValues() {
+      var existing = {};
+      entries.forEach(function (entry) {
+        if (entry.key) existing[String(entry.key)] = true;
+      });
+      var added = distinctValues.filter(function (val) {
+        return !existing[val];
+      }).map(function (val) {
+        return { key: val, value: val };
+      });
+      if (!added.length) {
+        showToast("All sample values are already in the map", "info", 2500);
+        return;
+      }
+      setExpanded(true);
+      setEntries(entries.concat(added));
+      showToast("Added " + added.length + " value(s) from sample data", "success", 2500);
+    }
+
+    var entryCount = entries.filter(function (entry) {
+      return entry.key && String(entry.key).trim();
+    }).length;
+
+    return h("div", { className: "map-pairs-editor" + (compact ? " map-pairs-editor-compact" : "") },
+      h("div", { className: "map-pairs-toolbar" },
+        h("button", {
+          type: "button",
+          className: "map-pairs-toggle",
+          onClick: function () { setExpanded(!expanded); },
+        },
+          h("span", { className: "map-pairs-toggle-icon" }, expanded ? "\u25BE" : "\u25B8"),
+          h("span", { className: "mapping-field-label" }, "Value map"),
+          h("span", { className: "map-pairs-count text-sm text-muted" },
+            entryCount ? entryCount + " entr" + (entryCount === 1 ? "y" : "ies") : "none"
+          )
+        ),
+        h("div", { className: "map-pairs-toolbar-actions" },
+          h("button", {
+            type: "button",
+            className: "btn btn-sm btn-secondary",
+            onClick: addEntry,
+          }, "+ Add row"),
+          distinctValues.length ? h("button", {
+            type: "button",
+            className: "btn btn-sm btn-secondary",
+            title: "Add rows for distinct values found in loaded data",
+            onClick: addFromSampleValues,
+          }, "From sample data (" + distinctValues.length + ")") : null
+        )
+      ),
+      expanded ? h("div", { className: "map-pairs-scroll" },
+        entries.length ? h("div", { className: "map-pairs-header" },
+          h("span", null, "Source value"),
+          h("span", null, "Mapped value"),
+          h("span", { className: "map-pairs-header-action" }, "")
+        ) : h("p", { className: "map-pairs-empty text-sm text-muted" },
+            "Map source values to output values (e.g. status codes → labels)."
+          ),
+        entries.map(function (entry, i) {
+          return h("div", { key: i, className: "map-pairs-row" },
+            h("input", {
+              className: "mapping-field-input",
+              type: "text",
+              value: entry.key || "",
+              placeholder: "source",
+              title: "Value from source field",
+              onInput: function (e) { updateEntry(i, { key: e.target.value }); },
+            }),
+            h("input", {
+              className: "mapping-field-input",
+              type: "text",
+              value: entry.value || "",
+              placeholder: "output",
+              title: "Value to emit when source matches",
+              onInput: function (e) { updateEntry(i, { value: e.target.value }); },
+            }),
+            h("button", {
+              type: "button",
+              className: "btn btn-sm btn-secondary",
+              title: "Remove row",
+              onClick: function () { removeEntry(i); },
+            }, "\u2715")
+          );
+        })
+      ) : null
+    );
+  }
+
   function NestedFieldsEditor(props) {
     var nestedFields = props.fields || [];
     var onChange = props.onChange;
     var depth = props.depth || 0;
+    var inspection = props.inspection;
+    var sourceData = props.sourceData;
 
     function updateChild(ci, updated) {
       var next = nestedFields.slice();
@@ -815,6 +937,8 @@
           totalFields: nestedFields.length,
           compact: true,
           hideKindSelect: true,
+          inspection: inspection,
+          sourceData: sourceData,
         });
       }),
       h("button", { type: "button", className: "btn btn-sm btn-secondary mt-1", onClick: addChild }, "+ Nested field")
@@ -830,6 +954,8 @@
     var compact = props.compact;
     var hideKindSelect = props.hideKindSelect;
     var rowError = props.rowError;
+    var inspection = props.inspection;
+    var sourceData = props.sourceData;
 
     function update(key, value) {
       var updated = Object.assign({}, field, {});
@@ -855,8 +981,20 @@
       onChange(index, updated);
     }
 
+    function updateMapEntries(entries) {
+      var updated = Object.assign({}, field, {
+        mapEntries: entries,
+        mapPairs: "",
+      });
+      onChange(index, updated);
+    }
+
     var kind = field.kind || "simple";
     var templates = MF ? MF.COMPUTE_TEMPLATES : [];
+    var mapEntries = MF ? MF.normalizeMapEntries(field) : [];
+    var mapDistinctValues = kind === "simple" && field.source && MF
+      ? MF.collectDistinctValuesForPath(sourceData, field.source, inspection)
+      : [];
 
     if (kind === "condition" || kind === "template" || kind === "static" || kind === "advanced") {
       var kindLabels = {
@@ -982,18 +1120,14 @@
             placeholder: "alt.path, other.path",
             onInput: function (e) { update("coalesce", e.target.value); },
           })
-        ) : null,
-        kind === "simple" ? h("div", null,
-          h("label", { className: "mapping-field-label" }, "Value map"),
-          h("input", {
-            className: "mapping-field-input",
-            type: "text",
-            value: field.mapPairs || "",
-            placeholder: "old:new, yes:1",
-            onInput: function (e) { update("mapPairs", e.target.value); },
-          })
         ) : null
       ) : null,
+      kind === "simple" ? h(MapPairsEditor, {
+        entries: mapEntries,
+        onChange: updateMapEntries,
+        distinctValues: mapDistinctValues,
+        compact: compact,
+      }) : null,
       kind === "compute" && !compact ? h("div", { className: "mapping-field-options" },
         h("div", null,
           h("label", { className: "mapping-field-label" }, "Template"),
@@ -1021,6 +1155,8 @@
         h(NestedFieldsEditor, {
           fields: field.nestedFields || [],
           onChange: function (nf) { update("nestedFields", nf); },
+          inspection: inspection,
+          sourceData: sourceData,
         })
       ) : null
     );
@@ -1107,6 +1243,8 @@
           onMove: moveField,
           totalFields: fields.length,
           rowError: errorForIndex(i),
+          inspection: inspection,
+          sourceData: sourceData,
         });
       }),
       h("datalist", { id: "field-suggestions" },

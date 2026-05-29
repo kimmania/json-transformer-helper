@@ -83,6 +83,7 @@
       kind: "simple",
       coalesce: "",
       mapPairs: "",
+      mapEntries: [],
       forEachPath: "",
       nestedFields: [],
       computeTemplate: "concat",
@@ -137,6 +138,63 @@
     return Object.keys(map).length ? map : null;
   }
 
+  function mapObjectToEntries(map) {
+    if (!map || typeof map !== "object") return [];
+    return Object.keys(map).map(function (k) {
+      return { key: k, value: map[k] != null ? String(map[k]) : "" };
+    });
+  }
+
+  function mapEntriesToObject(entries) {
+    if (!entries || !entries.length) return null;
+    var map = {};
+    entries.forEach(function (entry) {
+      if (!entry || entry.key == null) return;
+      var key = String(entry.key).trim();
+      if (!key) return;
+      map[key] = entry.value != null ? String(entry.value) : "";
+    });
+    return Object.keys(map).length ? map : null;
+  }
+
+  function normalizeMapEntries(field) {
+    if (!field) return [];
+    if (field.mapEntries && field.mapEntries.length) {
+      return field.mapEntries.map(function (entry) {
+        return {
+          key: entry.key != null ? String(entry.key) : "",
+          value: entry.value != null ? String(entry.value) : "",
+        };
+      });
+    }
+    var parsed = parseMapPairs(field.mapPairs);
+    return parsed ? mapObjectToEntries(parsed) : [];
+  }
+
+  function collectDistinctValuesForPath(data, path, inspection, max) {
+    max = max || 50;
+    if (inspection && inspection.fields && inspection.fields[path] && inspection.fields[path].distinctValues) {
+      return inspection.fields[path].distinctValues.slice(0, max);
+    }
+    if (!data || !path) return [];
+    var JT = global.JsonTransformer;
+    if (!JT) return [];
+    var values = [];
+    var seen = {};
+    var records = Array.isArray(data) ? data : [data];
+    for (var i = 0; i < records.length && values.length < max; i++) {
+      var v = JT.resolvePath(records[i], path);
+      if (v === undefined || v === null) continue;
+      if (typeof v === "object") continue;
+      var s = String(v);
+      if (!seen[s]) {
+        seen[s] = true;
+        values.push(s);
+      }
+    }
+    return values;
+  }
+
   function parseCoalesce(text) {
     if (!text || !String(text).trim()) return null;
     return String(text).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
@@ -167,7 +225,8 @@
     if (f.value !== undefined && f.value !== "") fieldDef.value = f.value;
     var coalesce = parseCoalesce(f.coalesce);
     if (coalesce && coalesce.length) fieldDef.coalesce = coalesce;
-    var map = parseMapPairs(f.mapPairs);
+    var map = mapEntriesToObject(normalizeMapEntries(f));
+    if (!map) map = parseMapPairs(f.mapPairs);
     if (map) fieldDef.map = map;
     return fieldDef;
   }
@@ -378,7 +437,7 @@
     });
     if (Array.isArray(def.coalesce)) vf.coalesce = def.coalesce.join(", ");
     if (def.map && typeof def.map === "object") {
-      vf.mapPairs = Object.keys(def.map).map(function (k) { return k + ":" + def.map[k]; }).join(", ");
+      vf.mapEntries = mapObjectToEntries(def.map);
     }
     return vf;
   }
@@ -604,5 +663,8 @@
     getSampleValuesForPath: getSampleValuesForPath,
     diffRecords: diffRecords,
     parseSourceList: parseSourceList,
+    normalizeMapEntries: normalizeMapEntries,
+    mapEntriesToObject: mapEntriesToObject,
+    collectDistinctValuesForPath: collectDistinctValuesForPath,
   };
 })(typeof window !== "undefined" ? window : globalThis);

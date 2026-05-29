@@ -687,6 +687,55 @@ input:focus, select:focus, textarea:focus {
   color: var(--text-secondary);
 }
 
+.mapping-field-readonly {
+  display: block;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.mapping-field-readonly .mapping-field-row-main {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.mapping-kind-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary, var(--bg-primary));
+  color: var(--text-secondary);
+}
+
+.mapping-advanced-summary {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.mapping-advanced-def {
+  margin: 8px 0 0;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  max-height: 160px;
+  overflow: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+.mapping-readonly-footnote {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted, var(--text-secondary));
+}
+
 .code-editor-wrap {
   display: flex;
   flex-direction: column;

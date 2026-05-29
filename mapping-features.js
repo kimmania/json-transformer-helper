@@ -88,7 +88,40 @@
       computeTemplate: "concat",
       computeSources: "",
       computeCode: COMPUTE_TEMPLATES[0].code,
+      advancedSummary: "",
+      advancedDefJson: "",
     }, overrides || {});
+  }
+
+  function serializeFieldDefForDisplay(def) {
+    return JSON.stringify(def, function (_key, val) {
+      if (typeof val === "function") return "[Function]";
+      return val;
+    }, 2);
+  }
+
+  function describeFieldDef(def) {
+    if (!def || typeof def !== "object") return "advanced field";
+    if (def.if !== undefined) {
+      return "if / then / else" + (def.elseIf ? " (+ elseIf)" : "");
+    }
+    if (def.template !== undefined) return "template: " + String(def.template).slice(0, 60);
+    if ("value" in def) return "static value: " + JSON.stringify(def.value);
+    if (typeof def.compute === "string") return "compute: " + def.compute.slice(0, 80);
+    if (typeof def.compute === "function") return "compute function";
+    if (def.groupBy) return "groupBy on " + def.forEach;
+    if (def.flatten) return "flatten " + def.forEach;
+    if (def.forEach !== undefined) return "forEach on " + def.forEach;
+    return "advanced field";
+  }
+
+  function readonlyVisualFieldFromDef(target, def, kind) {
+    return defaultVisualField({
+      target: target,
+      kind: kind,
+      advancedSummary: describeFieldDef(def),
+      advancedDefJson: serializeFieldDefForDisplay(def),
+    });
   }
 
   function parseMapPairs(text) {
@@ -257,19 +290,10 @@
   function defToVisualField(target, def) {
     if (!def || typeof def !== "object") return defaultVisualField({ target: target });
 
-    if (fieldDefIsAdvanced(def) && def.forEach === undefined && !(def.fields && !def.from)) {
-      return defaultVisualField({
-        target: target,
-        kind: "advanced",
-        source: "",
-      });
-    }
-
     if (def.forEach !== undefined && def.fields) {
       var nested = [];
       Object.keys(def.fields).forEach(function (k) {
-        var child = defToVisualField(k, def.fields[k]);
-        nested.push(child);
+        nested.push(defToVisualField(k, def.fields[k]));
       });
       return defaultVisualField({
         target: target,
@@ -294,6 +318,18 @@
       });
     }
 
+    if (def.if !== undefined) {
+      return readonlyVisualFieldFromDef(target, def, "condition");
+    }
+
+    if (def.template !== undefined) {
+      return readonlyVisualFieldFromDef(target, def, "template");
+    }
+
+    if ("value" in def && !def.from && !def.coalesce) {
+      return readonlyVisualFieldFromDef(target, def, "static");
+    }
+
     if (typeof def.compute === "function") {
       return defaultVisualField({
         target: target,
@@ -303,7 +339,30 @@
         computeTemplate: "custom",
         computeCode: "return a;",
         format: def.format || "",
+        advancedSummary: "compute function (edit in JS mode to change logic)",
       });
+    }
+
+    if (typeof def.compute === "string") {
+      return defaultVisualField({
+        target: target,
+        kind: "compute",
+        source: Array.isArray(def.from) ? def.from.join(", ") : (def.from || ""),
+        computeSources: Array.isArray(def.from) ? def.from.join(", ") : (def.from || ""),
+        computeTemplate: "custom",
+        computeCode: def.compute,
+        format: def.format || "",
+        advancedSummary: "compute expression",
+        advancedDefJson: serializeFieldDefForDisplay(def),
+      });
+    }
+
+    if (def.groupBy || def.flatten || def.filter || def.distinct || def.sortBy) {
+      return readonlyVisualFieldFromDef(target, def, "advanced");
+    }
+
+    if (fieldDefIsAdvanced(def)) {
+      return readonlyVisualFieldFromDef(target, def, "advanced");
     }
 
     var vf = defaultVisualField({
@@ -328,13 +387,48 @@
     options = options || {};
     var out = {};
     (fields || []).forEach(function (f) {
-      if (!f.target || f.kind === "advanced") return;
+      if (!f.target || f.kind === "advanced" || f.kind === "condition" || f.kind === "template" || f.kind === "static") return;
       var def = visualFieldToDef(f);
       if (def) out[f.target] = def;
     });
     var mapping = { fields: out };
     if (options.passthrough === true) mapping.passthrough = true;
     return applyMappingMeta(mapping, options.meta);
+  }
+
+  function mergeVisualFieldsIntoMapping(visualFields, baseMapping, options) {
+    options = options || {};
+    var baseFields = (baseMapping && baseMapping.fields) ? baseMapping.fields : {};
+    var mergedFields = {};
+    var readonlyKinds = { advanced: true, condition: true, template: true, static: true };
+
+    (visualFields || []).forEach(function (f) {
+      if (!f.target) return;
+      if (readonlyKinds[f.kind]) {
+        if (baseFields[f.target]) mergedFields[f.target] = baseFields[f.target];
+        return;
+      }
+      var def = visualFieldToDef(f);
+      if (def) mergedFields[f.target] = def;
+    });
+
+    var mapping = { fields: mergedFields };
+    if (options.passthrough === true) {
+      mapping.passthrough = true;
+    } else if (baseMapping && baseMapping.passthrough !== undefined) {
+      mapping.passthrough = baseMapping.passthrough;
+    }
+    return applyMappingMeta(mapping, options.meta || extractMappingMeta(baseMapping));
+  }
+
+  function formatMappingAsModule(mapping, asJsModule) {
+    var body = JSON.stringify(mapping, null, 2);
+    return asJsModule ? ("export default " + body + ";") : body;
+  }
+
+  function mappingFromCodeText(text, mode) {
+    if (mode === "json") return JSON.parse(text);
+    return parseMappingModule(text);
   }
 
   function visualFieldsFromMapping(mapping) {
@@ -490,6 +584,11 @@
     defaultVisualField: defaultVisualField,
     buildMappingFromVisualFields: buildMappingFromVisualFields,
     buildFullMapping: buildFullMapping,
+    mergeVisualFieldsIntoMapping: mergeVisualFieldsIntoMapping,
+    formatMappingAsModule: formatMappingAsModule,
+    mappingFromCodeText: mappingFromCodeText,
+    describeFieldDef: describeFieldDef,
+    serializeFieldDefForDisplay: serializeFieldDefForDisplay,
     visualFieldsFromMapping: visualFieldsFromMapping,
     fieldSummaryFromMapping: fieldSummaryFromMapping,
     visualFieldToDef: visualFieldToDef,

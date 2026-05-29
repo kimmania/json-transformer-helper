@@ -24,7 +24,7 @@ A standalone static web app for building [json-transformer](https://github.com/k
 
 ### UI/UX
 - **Dark/Light Theme** — Toggle between themes, preference saved to localStorage
-- **Auto-Save** — Mapping drafts saved to localStorage automatically
+- **Auto-Save (opt-in)** — Optional mapping drafts saved to localStorage; off by default until you enable it
 - **Toast Notifications** — Non-blocking error/success/warning messages
 - **3-Pane Layout** — Source tree | mapping editor | live preview
 

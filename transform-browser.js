@@ -668,7 +668,10 @@
   }
 
   function toCamelCase(name) {
-    const words = name.replace(/[-_\s]+/g, " ").split(" ");
+    if (/^[a-z][a-zA-Z0-9]*$/.test(name) && /[A-Z]/.test(name.slice(1))) {
+      return name;
+    }
+    const words = name.replace(/[-_.\s]+/g, " ").split(" ").filter(Boolean);
     return words.map((w, i) => i === 0 ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1).toLowerCase()).join("");
   }
 

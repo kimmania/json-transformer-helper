@@ -115,18 +115,67 @@
   }
 
   function copyToClipboard(text) {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(
-        function () { showToast("Copied to clipboard", "success", 2000); },
-        function () { showToast("Failed to copy", "error"); }
-      );
+    function onSuccess() { showToast("Copied to clipboard", "success", 2000); }
+    function onFail() { showToast("Failed to copy", "error"); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onSuccess, onFail);
+      return;
     }
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      onSuccess();
+    } catch (e) {
+      onFail();
+    }
+  }
+
+  function mappingHasCompute(obj) {
+    if (!obj || typeof obj !== "object") return false;
+    if (typeof obj.compute === "function") return true;
+    for (var k in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, k) && mappingHasCompute(obj[k])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function parseMappingFromCode(text, mode) {
+    if (!text || !String(text).trim()) return null;
+    if (mode === "json") {
+      return JSON.parse(text);
+    }
+    return new Function("return " + text)();
+  }
+
+  function visualFieldsFromMapping(mapping) {
+    var visualFields = [];
+    if (!mapping || !mapping.fields) return visualFields;
+    Object.entries(mapping.fields).forEach(function (_a) {
+      var target = _a[0], def = _a[1];
+      visualFields.push({
+        target: target,
+        source: def.from || "",
+        type: def.type || "auto",
+        format: def.format || "",
+        default: def.default != null ? String(def.default) : "",
+      });
+    });
+    return visualFields;
   }
 
   // ── Tree Node Component ────────────────────────────────────────────
 
   function TreeNode(props) {
-    var key = props.key;
+    var nodeKey = props.nodeKey;
     var value = props.value;
     var path = props.path;
     var onSelect = props.onSelect;
@@ -167,7 +216,7 @@
         style: { paddingLeft: (depth * 12) + "px" },
       },
         isExpandable ? h("span", { className: "tree-toggle" }, expanded ? "\u25BC" : "\u25B6") : h("span", { className: "tree-toggle" }),
-        key ? h("span", { className: "tree-key" }, key) : null,
+        nodeKey ? h("span", { className: "tree-key" }, nodeKey) : null,
         h("span", { className: "tree-type " + type }, type),
         renderValue()
       )
@@ -178,8 +227,9 @@
         type === "array" ? value.map(function (item, i) {
           return h(TreeNode, {
             key: "arr-" + i,
+            nodeKey: "[" + i + "]",
             value: item,
-            path: path ? path + "." + i : String(i),
+            path: path != null && path !== "" ? path + "." + i : String(i),
             onSelect: onSelect,
             selectedPath: selectedPath,
             depth: depth + 1,
@@ -187,8 +237,9 @@
         }) : Object.keys(value).map(function (k) {
           return h(TreeNode, {
             key: "obj-" + k,
+            nodeKey: k,
             value: value[k],
-            path: path ? path + "." + k : k,
+            path: path != null && path !== "" ? path + "." + k : k,
             onSelect: onSelect,
             selectedPath: selectedPath,
             depth: depth + 1,
@@ -247,18 +298,18 @@
         Array.isArray(filteredData) ? filteredData.map(function (record, i) {
           return h(TreeNode, {
             key: "record-" + i,
-            key: "record[" + i + "]",
+            nodeKey: "Record " + (i + 1),
             value: record,
-            path: "record[" + i + "]",
+            path: null,
             onSelect: onSelect,
             selectedPath: selectedPath,
             depth: 0,
           });
         }) : h(TreeNode, {
           key: "root",
-          key: "root",
+          nodeKey: "root",
           value: filteredData,
-          path: "root",
+          path: null,
           onSelect: onSelect,
           selectedPath: selectedPath,
           depth: 0,
@@ -598,6 +649,14 @@
     var fieldNames = inspection ? Object.keys(inspection.fields || {}) : [];
     var totalSteps = fieldNames.length + 2; // intro + fields + review
 
+    useEffect(function () {
+      if (open) {
+        setStep(0);
+        setAnswers([]);
+        setPassthrough(false);
+      }
+    }, [open]);
+
     if (!open) return null;
 
     function handleFieldAnswer(fieldName, answer) {
@@ -721,7 +780,10 @@
         ),
         h("div", { className: "modal-body" }, renderStep()),
         h("div", { className: "modal-footer" },
-          h("button", { className: "btn btn-secondary", onClick: handleBack },
+          h("button", {
+            className: "btn btn-secondary",
+            onClick: function () { step === 0 ? onClose() : handleBack(); },
+          },
             step === 0 ? "Cancel" : "Back"
           ),
           h("button", { className: "btn btn-primary", onClick: handleNext },
@@ -767,8 +829,10 @@
     var _useState9 = useState(getTheme()), theme = _useState9[0], setThemeState = _useState9[1];
     var _useState10 = useState(""), selectedPath = _useState10[0], setSelectedPath = _useState10[1];
     var _useState11 = useState(false), isLoading = _useState11[0], setIsLoading = _useState11[1];
-    var _useState12 = useState(false), hasComputeWarning = _useState12[0], setHasComputeWarning = _useState12[1];
-
+    var _useState12 = useState(function () {
+      return localStorage.getItem("jt-autosave-pref");
+    }), autosavePref = _useState12[0], setAutosavePref = _useState12[1];
+    var computeWarningAck = useRef(false);
     var fileInputRef = useRef(null);
 
     // Apply theme
@@ -776,8 +840,9 @@
       setTheme(theme);
     }, [theme]);
 
-    // Load saved state from localStorage
+    // Load saved state from localStorage (only when auto-save is enabled)
     useEffect(function () {
+      if (autosavePref !== "on") return;
       try {
         var saved = localStorage.getItem("jt-mapping");
         if (saved) {
@@ -789,10 +854,11 @@
           }
         }
       } catch (e) { }
-    }, []);
+    }, [autosavePref]);
 
-    // Save mapping to localStorage
+    // Save mapping to localStorage when opted in
     useEffect(function () {
+      if (autosavePref !== "on") return;
       if (mappingFields.length > 0 || codeEditorValue) {
         var state = {
           fields: mappingFields,
@@ -801,9 +867,9 @@
         };
         localStorage.setItem("jt-mapping", JSON.stringify(state));
       }
-    }, [mappingFields, codeEditorValue, editorMode]);
+    }, [mappingFields, codeEditorValue, editorMode, autosavePref]);
 
-    // Run transform when data or mapping changes
+    // Run transform when data or mapping changes (debounced)
     useEffect(function () {
       if (!sourceData) {
         setPreviewOutput(null);
@@ -811,46 +877,67 @@
         return;
       }
 
-      try {
-        var mapping;
-        if (editorMode === "visual") {
-          mapping = buildMappingFromVisual(mappingFields);
-        } else {
-          // Parse code editor
-          if (editorMode === "json") {
+      var timer = setTimeout(function () {
+        try {
+          var mapping;
+          if (editorMode === "visual") {
+            mapping = buildMappingFromVisual(mappingFields);
+          } else if (editorMode === "json") {
+            if (!codeEditorValue.trim()) {
+              setPreviewOutput(null);
+              setPreviewErrors([]);
+              return;
+            }
             mapping = JSON.parse(codeEditorValue);
           } else {
-            // JS mode - eval the expression
+            if (!codeEditorValue.trim()) {
+              setPreviewOutput(null);
+              setPreviewErrors([]);
+              return;
+            }
             mapping = new Function("return " + codeEditorValue)();
           }
-        }
 
-        if (!mapping || !mapping.fields) {
-          setPreviewOutput(null);
-          setPreviewErrors([]);
-          return;
-        }
-
-        // Prepare mapping (resolve inline dicts)
-        var ready = JsonTransformer.prepareMapping(mapping);
-
-        // Validate if schema present
-        if (ready.schema) {
-          var validation = JsonTransformer.validate(sourceData, ready);
-          setPreviewErrors(validation.errors || []);
-          if (!validation.valid) {
-            showToast(validation.errors.length + " validation errors found", "warning");
+          if (!mapping || !mapping.fields) {
+            setPreviewOutput(null);
+            setPreviewErrors([]);
+            return;
           }
-        }
 
-        // Transform
-        var result = JsonTransformer.transform(sourceData, ready);
-        setPreviewOutput(result);
-      } catch (e) {
-        setPreviewOutput(null);
-        setPreviewErrors([{ message: "Transform error: " + e.message }]);
-        showToast("Transform error: " + e.message, "error");
-      }
+          if (mappingHasCompute(mapping) && !computeWarningAck.current) {
+            var ok = window.confirm(
+              "This mapping includes compute functions that run JavaScript on your data. " +
+              "Only continue if you trust this mapping. Continue?"
+            );
+            if (!ok) {
+              setPreviewOutput(null);
+              setPreviewErrors([{ message: "Preview blocked: compute functions require confirmation" }]);
+              return;
+            }
+            computeWarningAck.current = true;
+          }
+
+          var ready = JsonTransformer.prepareMapping(mapping);
+
+          if (ready.schema) {
+            var validation = JsonTransformer.validate(sourceData, ready);
+            setPreviewErrors(validation.errors || []);
+            if (!validation.valid) {
+              showToast(validation.errors.length + " validation errors found", "warning");
+            }
+          } else {
+            setPreviewErrors([]);
+          }
+
+          var result = JsonTransformer.transform(sourceData, ready);
+          setPreviewOutput(result);
+        } catch (e) {
+          setPreviewOutput(null);
+          setPreviewErrors([{ message: "Transform error: " + e.message }]);
+        }
+      }, 200);
+
+      return function () { clearTimeout(timer); };
     }, [sourceData, mappingFields, codeEditorValue, editorMode]);
 
     function buildMappingFromVisual(fields) {
@@ -908,24 +995,30 @@
     // Export
     function exportMapping() {
       var mapping;
-      if (editorMode === "visual") {
-        mapping = buildMappingFromVisual(mappingFields);
-      } else {
-        mapping = codeEditorValue;
+      try {
+        if (editorMode === "visual") {
+          mapping = buildMappingFromVisual(mappingFields);
+        } else if (editorMode === "json") {
+          mapping = JSON.parse(codeEditorValue);
+        } else {
+          mapping = new Function("return " + codeEditorValue)();
+        }
+      } catch (e) {
+        showToast("Cannot export: invalid mapping (" + e.message + ")", "error");
+        return;
       }
-      if (!mapping) {
+      if (!mapping || !mapping.fields || Object.keys(mapping.fields).length === 0) {
         showToast("No mapping to export", "warning");
         return;
       }
+      var useJs = editorMode === "js" || mappingHasCompute(mapping);
       var content;
       var filename;
       var mimeType;
-      if (editorMode === "json") {
-        content = JSON.stringify(mapping, null, 2);
-        filename = "mapping.json";
-        mimeType = "application/json";
-      } else if (editorMode === "js") {
-        content = "export default " + codeEditorValue + ";";
+      if (useJs) {
+        content = editorMode === "js"
+          ? "export default " + codeEditorValue.trim().replace(/;?\s*$/, "") + ";"
+          : "export default " + JSON.stringify(mapping, null, 2) + ";";
         filename = "mapping.js";
         mimeType = "text/javascript";
       } else {
@@ -955,16 +1048,21 @@
       reader.onload = function (ev) {
         try {
           var text = ev.target.result;
+          var mapping;
           if (file.name.endsWith(".json")) {
-            var mapping = JSON.parse(text);
+            mapping = JSON.parse(text);
             setEditorMode("json");
             setCodeEditorValue(JSON.stringify(mapping, null, 2));
           } else if (file.name.endsWith(".js")) {
-            setEditorMode("js");
-            // Strip "export default" wrapper if present
             var clean = text.replace(/^export\s+default\s+/, "").replace(/;?\s*$/, "");
+            mapping = new Function("return " + clean)();
+            setEditorMode("js");
             setCodeEditorValue(clean);
           }
+          if (mapping && mapping.fields) {
+            setMappingFields(visualFieldsFromMapping(mapping));
+          }
+          computeWarningAck.current = false;
           showToast("Mapping imported", "success");
         } catch (err) {
           showToast("Failed to import mapping: " + err.message, "error");
@@ -980,57 +1078,46 @@
         setCodeEditorValue(JSON.stringify(mapping, null, 2));
       } else if (mode === "visual" && editorMode !== "visual") {
         try {
-          var parsed = JSON.parse(codeEditorValue);
+          var parsed = parseMappingFromCode(codeEditorValue, editorMode);
           if (parsed && parsed.fields) {
-            var visualFields = [];
-            Object.entries(parsed.fields).forEach(function (_a) {
-              var target = _a[0], def = _a[1];
-              visualFields.push({
-                target: target,
-                source: def.from || "",
-                type: def.type || "auto",
-                format: def.format || "",
-                default: def.default || "",
-              });
-            });
-            setMappingFields(visualFields);
+            setMappingFields(visualFieldsFromMapping(parsed));
           }
         } catch (e) {
-          showToast("Cannot convert to visual mode: invalid JSON", "error");
+          showToast("Cannot convert to visual mode: " + e.message, "error");
           return;
         }
       }
       setEditorMode(mode);
     }
 
-    // Tree node selection
-    function handleTreeSelect(path, value, type) {
+    // Tree node selection — copy dot-path to clipboard (FR-102)
+    function handleTreeSelect(path) {
+      if (!path) return;
       setSelectedPath(path);
-      // If in visual mode and editing a field, auto-fill source path
-      if (mappingFields.length > 0) {
-        // Could auto-fill the last edited field's source
+      copyToClipboard(path);
+    }
+
+    function clearSavedData() {
+      localStorage.removeItem("jt-mapping");
+      showToast("Saved draft cleared", "success", 2000);
+    }
+
+    function setAutosavePreference(enabled) {
+      var pref = enabled ? "on" : "off";
+      localStorage.setItem("jt-autosave-pref", pref);
+      setAutosavePref(pref);
+      if (!enabled) {
+        localStorage.removeItem("jt-mapping");
       }
+      showToast(enabled ? "Auto-save enabled" : "Auto-save disabled", "info", 2500);
     }
 
     // Wizard complete
     function handleWizardComplete(mapping) {
-      // Convert wizard mapping to visual fields
-      var visualFields = [];
-      if (mapping.fields) {
-        Object.entries(mapping.fields).forEach(function (_a) {
-          var target = _a[0], def = _a[1];
-          visualFields.push({
-            target: target,
-            source: def.from || "",
-            type: def.type || "auto",
-            format: def.format || "",
-            default: def.default || "",
-          });
-        });
-      }
-      setMappingFields(visualFields);
+      var fields = visualFieldsFromMapping(mapping);
+      setMappingFields(fields);
       setEditorMode("visual");
-      showToast("Wizard complete! " + visualFields.length + " fields mapped.", "success");
+      showToast("Wizard complete! " + fields.length + " fields mapped.", "success");
     }
 
     // Clear data
@@ -1051,6 +1138,13 @@
     }, [mappingFields]);
 
     return h("div", null,
+      autosavePref === null ? h("div", { className: "autosave-banner" },
+        h("span", null, "Auto-save your work to browser storage? (data stays on this device)"),
+        h("div", { className: "flex gap-1" },
+          h("button", { className: "btn btn-sm btn-primary", onClick: function () { setAutosavePreference(true); } }, "Enable"),
+          h("button", { className: "btn btn-sm btn-secondary", onClick: function () { setAutosavePreference(false); } }, "No thanks")
+        )
+      ) : null,
       // Header
       h("header", { className: "app-header" },
         h("div", { className: "app-title" },
@@ -1106,6 +1200,11 @@
             className: "btn btn-secondary",
             onClick: clearData,
           }, "\u2716 Clear"),
+          autosavePref === "on" ? h("button", {
+            className: "btn btn-secondary",
+            onClick: clearSavedData,
+            "data-tooltip": "Clear auto-saved draft",
+          }, "Clear draft") : null,
           // Theme toggle
           h("button", {
             className: "btn btn-icon btn-secondary",
@@ -1136,22 +1235,22 @@
               })
             )
           ),
-          h("div", { className: "panel-body" },
+          h("div", { className: "panel-body panel-body-mapping" },
             isLoading ? h("div", { className: "loading-spinner" }, "Processing...") : null,
-            // Data inspector
             h(DataInspector, { inspection: inspection }),
-            // Editor
-            editorMode === "visual"
-              ? h(VisualMappingEditor, {
-                  fields: mappingFields,
-                  onChange: setMappingFields,
-                  inspection: inspection,
-                })
-              : h(CodeEditor, {
-                  mode: editorMode,
-                  value: codeEditorValue,
-                  onChange: setCodeEditorValue,
-                })
+            h("div", { className: "mapping-editor-scroll" },
+              editorMode === "visual"
+                ? h(VisualMappingEditor, {
+                    fields: mappingFields,
+                    onChange: setMappingFields,
+                    inspection: inspection,
+                  })
+                : h(CodeEditor, {
+                    mode: editorMode,
+                    value: codeEditorValue,
+                    onChange: setCodeEditorValue,
+                  })
+            )
           )
         ),
         // Preview panel

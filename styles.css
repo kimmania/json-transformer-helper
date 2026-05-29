@@ -157,6 +157,7 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* ── Panels ────────────────────────────────────────────────────────── */
@@ -166,6 +167,7 @@ input:focus, select:focus, textarea:focus {
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-primary);
+  min-height: 0;
 }
 
 .panel-header {
@@ -190,6 +192,27 @@ input:focus, select:focus, textarea:focus {
 .panel-body {
   flex: 1;
   overflow: auto;
+  padding: 12px;
+  min-height: 0;
+}
+
+/* Mapping panel: inspector pinned, field list scrolls */
+.panel-body-mapping {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.panel-body-mapping > .inspector {
+  flex-shrink: 0;
+  padding: 12px 12px 0;
+}
+
+.mapping-editor-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 12px;
 }
 
@@ -518,6 +541,22 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* ── Wizard Modal ──────────────────────────────────────────────────── */
+
+.autosave-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: var(--surface-2, #f0f4f8);
+  border-bottom: 1px solid var(--border, #d0d7de);
+  font-size: 0.875rem;
+}
+
+[data-theme="dark"] .autosave-banner {
+  background: var(--surface-2, #21262d);
+  border-bottom-color: var(--border, #30363d);
+}
 
 .modal-overlay {
   position: fixed;

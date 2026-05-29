@@ -1519,15 +1519,29 @@
       showToast("Preview cleared", "info", 1500);
     }
 
-    // Clear data
+    // Reset workspace — clear loaded data and mapping
     function clearData() {
       setSourceData(null);
       setInspection(null);
+      setMappingFields([]);
+      setCodeEditorValue("");
+      setEditorMode("visual");
       setPreviewOutput(null);
       setPreviewErrors([]);
+      setExpectedOutput(null);
+      setPassthrough(false);
+      setMappingValidationErrors([]);
+      setUndoStack([]);
+      setRedoStack([]);
       setSelectedPath("");
+      setWizardOpen(false);
       computeWarningAck.current = false;
       if (fileInputRef.current) fileInputRef.current.value = "";
+      if (expectedInputRef.current) expectedInputRef.current.value = "";
+      if (autosavePref === "on") {
+        localStorage.removeItem("jt-mapping");
+      }
+      showToast("Data and mapping reset", "success", 2000);
     }
 
     // Sync code editor value when in visual mode (keep it updated)
@@ -1596,11 +1610,11 @@
             onClick: exportOutput,
             disabled: !previewOutput,
           }, "\uD83D\uDCE4 Output"),
-          // Clear
           h("button", {
             className: "btn btn-secondary",
             onClick: clearData,
-          }, "\u2716 Clear"),
+            "data-tooltip": "Reset — clear data, mapping, and preview",
+          }, "\u2716 Reset"),
           autosavePref === "on" ? h("button", {
             className: "btn btn-secondary",
             onClick: clearSavedData,

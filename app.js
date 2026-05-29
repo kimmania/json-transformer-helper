@@ -782,6 +782,568 @@
 
   // ── Mapping Editor (Table-based) ───────────────────────────────────
 
+  function readStoredPanelWidth(key, fallback, min, max) {
+    try {
+      var w = localStorage.getItem(key);
+      if (w) return Math.min(max, Math.max(min, parseInt(w, 10)));
+    } catch (e) { /* ignore */ }
+    return fallback;
+  }
+
+  function startPanelResize(e, config) {
+    e.preventDefault();
+    var startX = e.clientX;
+    var startW = config.getStartWidth();
+    var currentW = startW;
+    function onMove(ev) {
+      currentW = Math.min(config.max, Math.max(config.min, startW + (ev.clientX - startX) * config.direction));
+      config.onWidth(currentW);
+    }
+    function onUp() {
+      try {
+        if (config.storageKey) localStorage.setItem(config.storageKey, String(currentW));
+      } catch (err) { /* ignore */ }
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  var HELP_TOPICS = [
+    {
+      id: "overview",
+      title: "Overview",
+      body: "Load JSON source data, define a mapping, and preview transformed output in real time.\n\nVisual mode — table editor for simple, forEach, and nested mappings.\nJSON / JS mode — full mapping document including conditions, compute, and dictionaries.\nWizard — guided steps with format suggestions.",
+    },
+    {
+      id: "field-map",
+      title: "Field mapping",
+      body: "Each destination field is defined under fields in the mapping. Most entries use from to read a source path (dot notation for nested data).",
+      examples: [
+        {
+          title: "Rename + format",
+          description: "Copy a source field and apply a format on output.",
+          code: [
+            'full_name: { from: "FullName", format: "uppercase" },',
+            'age:       { from: "BirthYear", format: "number" },',
+          ].join("\n"),
+        },
+        {
+          title: "Value map (lookup table)",
+          description: "Translate known source values to output codes.",
+          code: [
+            'dept_code: {',
+            '  from: "Department",',
+            '  map: {',
+            '    "Engineering": "ENG",',
+            '    "Marketing": "MKT",',
+            '  },',
+            '},',
+          ].join("\n"),
+        },
+        {
+          title: "Default when missing",
+          description: "Use default when the source path is null or undefined.",
+          code: 'status_label: { from: "Status", default: "unknown" }',
+        },
+      ],
+    },
+    {
+      id: "compute",
+      title: "Compute",
+      body: "Compute combines one or more source paths with a JavaScript function. In .js mappings, use a real function; in JSON, the engine uses a sandboxed expression.\n\nParameters: a, b, c… match from paths in order. You may also receive row (full source record) and dicts (inline dictionaries). Edit compute in JS mode or use Visual → Compute with templates.",
+      examples: [
+        {
+          title: "Multiply two fields (line total)",
+          description: "Common inside forEach item mappings (see Nested order sample).",
+          code: [
+            "line_total: {",
+            '  from: ["Price", "Qty"],',
+            "  compute: (price, qty) => parseFloat(price) * qty,",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Concatenate with full row access",
+          description: "Third argument is the source row — useful for extra checks.",
+          code: [
+            "display_name: {",
+            '  from: ["FirstName", "LastName"],',
+            "  compute: (first, last, row) => `${first} ${last}`.trim(),",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Build a formatted address",
+          description: "Format each segment before joining (Data cleaning sample).",
+          code: [
+            "address: {",
+            '  from: ["street", "city", "state", "zip"],',
+            "  compute: (street, city, state, zip) => {",
+            '    const tc = s => String(s).toLowerCase().replace(/\\b\\w/g, c => c.toUpperCase());',
+            '    return `${tc(street)}, ${tc(city)}, ${String(state).toUpperCase()} ${zip}`;',
+            "  },",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Dictionary lookup in compute",
+          description: "dicts holds mapping.dictionaries entries. Timesheet sample pattern.",
+          code: [
+            "department: {",
+            '  from: ["employee_id"],',
+            "  compute: (empId, row, dicts) => {",
+            "    const emp = dicts.employees?.[empId];",
+            "    if (!emp) return \"Unknown\";",
+            "    return dicts.departments?.[emp.dept_code]?.name ?? emp.dept_code;",
+            "  },",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Visual editor templates",
+          description: "In Visual mode, pick Compute and use templates (concat, add, divide, custom). Parameters map to a, b, c in the expression.",
+          code: [
+            "// Equivalent to: return [a, b].filter(...).join(\" \");",
+            'compute: "return String(a) + \\" \\" + String(b);"',
+          ].join("\n"),
+        },
+      ],
+    },
+    {
+      id: "conditions",
+      title: "Conditions (if / then / else)",
+      body: "Conditional fields emit then or else based on a condition object. Use JSON/JS mode — they appear as read-only cards in Visual mode.\n\nOperators: eq, neq, gt, gte, lt, lte, truthy, falsy, exists, matches (regex), in (array of values). Field may be a top-level or dot path.",
+      examples: [
+        {
+          title: "Simple if / then / else",
+          description: "Compare one field to a value.",
+          code: [
+            "employment_type: {",
+            '  if: { field: "HourlyRate", op: "gt", value: 0 },',
+            '  then: "hourly",',
+            '  else: "salaried",',
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Boolean flag",
+          description: "CRM sample — active status check.",
+          code: [
+            "is_vip: {",
+            '  if: { field: "StatusCode", op: "eq", value: "A" },',
+            "  then: true,",
+            "  else: false,",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "thenMap (post-process then value)",
+          description: "Map the then result through a lookup table.",
+          code: [
+            "tier: {",
+            '  if: { field: "TotalSpend", op: "gte", value: 10000 },',
+            '  then: "platinum",',
+            "  thenMap: { platinum: \"VIP Platinum\" },",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "exists — use another field when present",
+          description: "then can be a nested field definition, not only a literal.",
+          code: [
+            "emergency_contact: {",
+            '  if: { field: "EmergencyPhone", op: "exists", value: true },',
+            '  then: { from: "EmergencyPhone" },',
+            '  else: "N/A",',
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "matches (regex) and in (list)",
+          description: "Employee / CRM patterns.",
+          code: [
+            'email_valid: { if: { field: "Email", op: "matches", value: "^[^@]+@[^@]+\\\\.[^@]+$" }, then: true, else: false },',
+            'message: { if: { field: "StatusCode", op: "in", value: ["A", "P"] }, then: "Welcome!", else: "Unavailable." },',
+          ].join("\n"),
+        },
+        {
+          title: "Nested paths in conditions",
+          description: "Order priority from customer + total (Nested order sample).",
+          code: [
+            "priority: {",
+            "  if: {",
+            "    and: [",
+            '      { field: "customer.FullName", op: "exists", value: true },',
+            '      { field: "grand_total", op: "gte", value: 500 },',
+            "    ],",
+            "  },",
+            '  then: "high",',
+            '  else: "standard",',
+            "},",
+          ].join("\n"),
+        },
+      ],
+    },
+    {
+      id: "logic-composite",
+      title: "AND / OR / NOT",
+      body: "Combine conditions with and (all true), or (any true), or not (invert). Nest freely for complex rules. Employee import sample is the reference for composite logic.",
+      examples: [
+        {
+          title: "AND — all conditions must pass",
+          description: "Bonus eligibility example.",
+          code: [
+            "bonus_eligible: {",
+            "  if: {",
+            "    and: [",
+            '      { field: "Status", op: "eq", value: "active" },',
+            '      { field: "YearsEmployed", op: "gt", value: 1 },',
+            '      { field: "Salary", op: "gt", value: 50000 },',
+            "    ],",
+            "  },",
+            "  then: true,",
+            "  else: false,",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "OR — any condition passes",
+          description: "Remote work eligibility.",
+          code: [
+            "remote_ok: {",
+            "  if: {",
+            "    or: [",
+            '      { field: "Department", op: "eq", value: "Engineering" },',
+            '      { field: "Department", op: "eq", value: "Management" },',
+            '      { field: "Title", op: "matches", value: "(?i)(director|vp|chief)" },',
+            "    ],",
+            "  },",
+            "  then: true,",
+            "  else: false,",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "NOT — invert a condition",
+          description: "Flag records that are not active.",
+          code: [
+            "needs_review: {",
+            '  if: { not: { field: "Status", op: "eq", value: "active" } },',
+            "  then: true,",
+            "  else: false,",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Nested AND + OR",
+          description: "Senior IC rule — mix groups.",
+          code: [
+            "senior_ic: {",
+            "  if: {",
+            "    and: [",
+            "      { or: [",
+            '          { field: "Department", op: "eq", value: "Engineering" },',
+            '          { field: "Department", op: "eq", value: "Data" },',
+            "        ] },",
+            "      { or: [",
+            '          { field: "Level", op: "eq", value: "senior" },',
+            '          { field: "Level", op: "eq", value: "staff" },',
+            "        ] },",
+            '      { field: "EmployeeType", op: "neq", value: "contractor" },',
+            "    ],",
+            "  },",
+            "  then: true,",
+            "  else: false,",
+            "},",
+          ].join("\n"),
+        },
+      ],
+    },
+    {
+      id: "templates-coalesce",
+      title: "Templates & coalesce",
+      body: "template builds a string from {field} placeholders on the source row. coalesce tries paths in order and uses the first non-null value (optional default). value sets a static literal with no source.",
+      examples: [
+        {
+          title: "Template string",
+          description: "Data cleaning sample — optional format on result.",
+          code: [
+            "full_name: {",
+            '  template: "{first_name} {last_name}",',
+            '  format: "titlecase",',
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Coalesce with default",
+          description: "First available phone wins.",
+          code: [
+            "phone: {",
+            '  coalesce: ["mobile", "work_phone", "home_phone"],',
+            '  default: "N/A",',
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Static value",
+          description: "No from — always emits the literal.",
+          code: 'source_system: { value: "crm-legacy" }',
+        },
+      ],
+    },
+    {
+      id: "foreach",
+      title: "Array (forEach)",
+      body: "When a source field is an array of objects, forEach maps each element through a nested fields block. Sub-field from paths are relative to the array item.",
+      examples: [
+        {
+          title: "Line items array",
+          description: "Nested order sample — output key items, source array LineItems.",
+          code: [
+            "items: {",
+            '  forEach: "LineItems",',
+            "  fields: {",
+            '    product_code: { from: "SKU" },',
+            '    quantity:     { from: "Qty", format: "number" },',
+            '    unit_price:   { from: "Price", format: "number" },',
+            "    line_total: {",
+            '      from: ["Price", "Qty"],',
+            "      compute: (price, qty) => parseFloat(price) * qty,",
+            "    },",
+            "  },",
+            "},",
+          ].join("\n"),
+        },
+      ],
+    },
+    {
+      id: "nested",
+      title: "Nested objects",
+      body: "A field whose definition is only fields (no from) builds a nested output object. Dot-path targets like customer.name are also valid for flat outputs.",
+      examples: [
+        {
+          title: "Nested shipping block",
+          description: "Nested order sample.",
+          code: [
+            "shipping: {",
+            "  fields: {",
+            '    city:  { from: "ship_city", format: "uppercase" },',
+            '    state: { from: "ship_state" },',
+            '    zip:   { from: "ship_zip", map: { "10001": "10xxx" } },',
+            "  },",
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "Dot-path target (flat nested shape)",
+          description: "Alternative style — single-level keys with dots.",
+          code: [
+            '"customer.name":  { from: "customer.FullName", format: "uppercase" },',
+            '"customer.email": { from: "customer.Email", format: "lowercase" },',
+          ].join("\n"),
+        },
+      ],
+    },
+    {
+      id: "dictionaries",
+      title: "Dictionaries & lookup",
+      body: "mapping.dictionaries holds reference data (inline objects in the browser; $file in CLI). lookup resolves a key from from, optionally drill into lookupPath. Advanced lookups often use compute + dicts.",
+      examples: [
+        {
+          title: "Inline dictionary + lookup",
+          description: "Timesheet pattern (browser: inline only).",
+          code: [
+            "dictionaries: {",
+            "  statusMap: { A: \"approved\", P: \"pending\", R: \"rejected\" },",
+            "},",
+            "fields: {",
+            '  entry_status: { from: "status", lookup: "statusMap" },',
+            "},",
+          ].join("\n"),
+        },
+        {
+          title: "lookupPath — field from record",
+          description: "Resolve employee_id to full_name from employees dict.",
+          code: [
+            "employee_name: {",
+            '  from: "employee_id",',
+            '  lookup: "employees",',
+            '  lookupPath: "full_name",',
+            "},",
+          ].join("\n"),
+        },
+      ],
+    },
+    {
+      id: "formats",
+      title: "Date & number formats",
+      body: "Set format on a from field. Dates use outputFormat tokens: YYYY, MM, DD, MMMM, hh, mm, AMPM. Numbers can use round with precision, or split/join/truncate/replace for strings.",
+      examples: [
+        {
+          title: "Date output formats",
+          code: [
+            'created: { from: "CreatedDate", format: "date", outputFormat: "YYYY-MM-DD" },',
+            'ship_date: { from: "date_shipped", format: "date", outputFormat: "MMMM DD, YYYY" },',
+          ].join("\n"),
+        },
+        {
+          title: "Round / split / join",
+          code: [
+            'price: { from: "price", format: "round", precision: 2 },',
+            'tags:  { from: "tags", format: "split", separator: "," },',
+            'keywords: { from: "keywords", format: "join", separator: " | " },',
+          ].join("\n"),
+        },
+      ],
+    },
+    {
+      id: "passthrough",
+      title: "Passthrough",
+      body: "passthrough: true copies all unmapped source keys to output (camelCase). Use an object to exclude paths: passthrough: { exclude: [\"internal_id\"] }.",
+      examples: [
+        {
+          title: "Passthrough with exclusions",
+          code: [
+            'passthrough: { exclude: ["internal_id"] },',
+            "fields: {",
+            "  // fields here override passthrough keys",
+            "},",
+          ].join("\n"),
+        },
+      ],
+    },
+    {
+      id: "wizard",
+      title: "Mapping wizard",
+      body: "Steps through fields, groups arrays (forEach) and nested paths, and supports format pickers. Finish opens Visual mode with the generated mapping. Complex rules still need JS/JSON mode.",
+    },
+    {
+      id: "import-export",
+      title: "Import & export",
+      body: "Import .json or .js from the json-transformer CLI (CLI Samples menu loads bundled examples). Export as .json or .js; compute functions require .js. Copy mapping uses the same content as export.",
+    },
+    {
+      id: "panels",
+      title: "Panels & layout",
+      body: "Drag handles resize Source and Preview panels. Collapse headers hide panel bodies. Mapping editor fills remaining width.",
+    },
+  ];
+
+  function HelpPanel(props) {
+    var open = props.open;
+    var onClose = props.onClose;
+    var _useState = useState(HELP_TOPICS[0].id), activeId = _useState[0], setActiveId = _useState[1];
+
+    if (!open) return null;
+
+    var active = HELP_TOPICS.find(function (t) { return t.id === activeId; }) || HELP_TOPICS[0];
+
+    return h("div", {
+      className: "help-overlay",
+      onClick: function (e) { if (e.target === e.currentTarget) onClose(); },
+    },
+      h("aside", { className: "help-panel", role: "dialog", "aria-label": "Help" },
+        h("div", { className: "help-panel-header" },
+          h("span", { className: "help-panel-title" }, "Help"),
+          h("button", { type: "button", className: "btn btn-icon", onClick: onClose, title: "Close help" }, "\u2715")
+        ),
+        h("div", { className: "help-panel-body" },
+          h("nav", { className: "help-nav" },
+            HELP_TOPICS.map(function (topic) {
+              return h("button", {
+                key: topic.id,
+                type: "button",
+                className: "help-nav-item" + (topic.id === activeId ? " active" : ""),
+                onClick: function () { setActiveId(topic.id); },
+              }, topic.title);
+            })
+          ),
+          h("div", { className: "help-content" },
+            h("h3", { className: "help-content-title" }, active.title),
+            active.body.split("\n\n").map(function (para, i) {
+              return h("p", { key: "p-" + i, className: "help-content-body" }, para);
+            }),
+            active.examples && active.examples.length ? h("div", { className: "help-examples" },
+              active.examples.map(function (ex, i) {
+                return h("section", { key: "ex-" + i, className: "help-example" },
+                  h("h4", { className: "help-example-title" }, ex.title),
+                  ex.description ? h("p", { className: "help-example-desc" }, ex.description) : null,
+                  h("pre", { className: "help-example-code" }, ex.code)
+                );
+              })
+            ) : null
+          )
+        )
+      )
+    );
+  }
+
+  function FormatOptionExtras(props) {
+    var field = props.field;
+    var onPatch = props.onPatch;
+    var compact = props.compact;
+    if (!MF || !field) return null;
+
+    if (field.format === "date") {
+      var preset = MF.dateOutputPresetValue(field.outputFormat);
+      var isCustom = preset === "__custom__";
+      return h("div", { className: "format-option-extras" + (compact ? " format-option-extras-compact" : "") },
+        h("label", { className: "mapping-field-label" }, "Date output format"),
+        h("select", {
+          className: "mapping-field-input",
+          value: isCustom ? "__custom__" : preset,
+          onChange: function (e) {
+            var val = e.target.value;
+            if (val === "__custom__") {
+              onPatch({ outputFormat: field.outputFormat || "YYYY-MM-DD" });
+            } else {
+              onPatch({ outputFormat: val });
+            }
+          },
+        },
+          MF.DATE_OUTPUT_PRESETS.map(function (p) {
+            return h("option", { key: p.value, value: p.value }, p.label);
+          }),
+          h("option", { value: "__custom__" }, "Custom…")
+        ),
+        isCustom ? h("input", {
+          className: "mapping-field-input",
+          type: "text",
+          value: field.outputFormat || "",
+          placeholder: "YYYY-MM-DD",
+          onInput: function (e) { onPatch({ outputFormat: e.target.value.trim() }); },
+        }) : null
+      );
+    }
+
+    if (field.format === "number" || field.format === "round") {
+      var numUi = MF.numberFormatUiValue(field);
+      return h("div", { className: "format-option-extras" + (compact ? " format-option-extras-compact" : "") },
+        h("label", { className: "mapping-field-label" }, "Number style"),
+        h("select", {
+          className: "mapping-field-input",
+          value: numUi,
+          onChange: function (e) {
+            var patch = MF.applyNumberFormatUi(e.target.value);
+            onPatch(patch);
+          },
+        },
+          MF.NUMBER_FORMAT_OPTIONS.map(function (opt) {
+            return h("option", { key: opt.value, value: opt.value }, opt.label);
+          })
+        )
+      );
+    }
+
+    return null;
+  }
+
   function MapPairsEditor(props) {
     var entries = props.entries || [];
     var onChange = props.onChange;
@@ -1097,7 +1659,17 @@
         ) : null,
         kind === "simple" || kind === "compute" ? h("div", null,
           h("label", { className: "mapping-field-label" }, "Format"),
-          h("select", { value: field.format || "", onChange: function (e) { update("format", e.target.value); } },
+          h("select", {
+            value: field.format || "",
+            onChange: function (e) {
+              var fmt = e.target.value;
+              var updated = Object.assign({}, field, { format: fmt });
+              if (fmt === "date" && !field.outputFormat) updated.outputFormat = "YYYY-MM-DD";
+              if (fmt === "number" && MF) Object.assign(updated, MF.applyNumberFormatUi("plain"));
+              if (fmt !== "number" && fmt !== "round") updated.precision = "";
+              onChange(index, updated);
+            },
+          },
             h("option", { value: "" }, "None"),
             h("option", { value: "uppercase" }, "Uppercase"),
             h("option", { value: "lowercase" }, "Lowercase"),
@@ -1122,6 +1694,14 @@
           })
         ) : null
       ) : null,
+      kind === "simple" ? h(FormatOptionExtras, {
+        field: field,
+        compact: compact,
+        onPatch: function (patch) {
+          var updated = Object.assign({}, field, patch);
+          onChange(index, updated);
+        },
+      }) : null,
       kind === "simple" ? h(MapPairsEditor, {
         entries: mapEntries,
         onChange: updateMapEntries,
@@ -1711,7 +2291,10 @@
       ? MF.diffRecords(expected, actual)
       : null;
 
-    return h("div", { className: "panel panel-preview" + (props.collapsed ? " panel-collapsed" : "") },
+    return h("div", {
+      className: "panel panel-preview" + (props.collapsed ? " panel-collapsed" : ""),
+      style: props.collapsed ? undefined : props.panelStyle,
+    },
       h(PanelCollapseHeader, {
         collapsed: props.collapsed,
         title: "Preview",
@@ -1919,6 +2502,10 @@
       };
       if (a.type && a.type !== "auto") def.type = a.type;
       if (a.format) def.format = a.format;
+      if (a.outputFormat) def.outputFormat = a.outputFormat;
+      if (a.precision !== "" && a.precision != null && !isNaN(Number(a.precision))) {
+        def.precision = Number(a.precision);
+      }
       if (a.default !== undefined) def.default = a.default;
       sub[target] = def;
     });
@@ -1955,6 +2542,10 @@
       var fieldDef = { from: a.source || a.field };
       if (a.type && a.type !== "auto") fieldDef.type = a.type;
       if (a.format) fieldDef.format = a.format;
+      if (a.outputFormat) fieldDef.outputFormat = a.outputFormat;
+      if (a.precision !== "" && a.precision != null && !isNaN(Number(a.precision))) {
+        fieldDef.precision = Number(a.precision);
+      }
       if (a.default !== undefined) fieldDef.default = a.default;
       fields[target] = fieldDef;
     });
@@ -2215,44 +2806,62 @@
           var relSource = relativeSubSource(stepDef.kind, stepDef.field || stepDef.parent, subPath);
           var dest = isSubSkipped ? "" : ((subAns && subAns.target) || inferSubFieldTarget(subPath));
           var subFormat = wizardResolvedFormat(subAns, subPath, inspection);
-          return h("div", { key: subPath, className: "wizard-subfield-row" },
-            h("div", { className: "wizard-subfield-source" },
-              h("span", { className: "font-mono text-sm", title: subPath }, relSource)
+          var displayFormat = subAns && subAns.format === "round" ? "number" : subFormat;
+          return h("div", { key: subPath, className: "wizard-subfield-block" },
+            h("div", { className: "wizard-subfield-row" },
+              h("div", { className: "wizard-subfield-source" },
+                h("span", { className: "font-mono text-sm", title: subPath }, relSource)
+              ),
+              h("input", {
+                className: "mapping-field-input",
+                type: "text",
+                value: dest,
+                disabled: isSubSkipped,
+                placeholder: "output_field",
+                onInput: function (e) {
+                  updateNestedAnswer(stepDef, subPath, {
+                    action: "accept",
+                    target: e.target.value.trim(),
+                  });
+                },
+              }),
+              wizardFormatSelect({
+                value: displayFormat,
+                disabled: isSubSkipped,
+                onChange: function (e) {
+                  var fmt = e.target.value || null;
+                  var patch = { action: "accept", format: fmt };
+                  if (fmt === "date") patch.outputFormat = (subAns && subAns.outputFormat) || "YYYY-MM-DD";
+                  if (fmt === "number" && MF) Object.assign(patch, MF.applyNumberFormatUi("plain"));
+                  if (fmt !== "number" && fmt !== "round") patch.precision = "";
+                  updateNestedAnswer(stepDef, subPath, patch);
+                },
+              }),
+              h("button", {
+                type: "button",
+                className: "btn btn-sm btn-secondary",
+                title: isSubSkipped ? "Include sub-field" : "Skip sub-field",
+                onClick: function () {
+                  updateNestedAnswer(stepDef, subPath, {
+                    action: isSubSkipped ? "accept" : "skip",
+                    target: inferSubFieldTarget(subPath),
+                  });
+                },
+              }, isSubSkipped ? "Undo" : "Skip")
             ),
-            h("input", {
-              className: "mapping-field-input",
-              type: "text",
-              value: dest,
-              disabled: isSubSkipped,
-              placeholder: "output_field",
-              onInput: function (e) {
-                updateNestedAnswer(stepDef, subPath, {
-                  action: "accept",
-                  target: e.target.value.trim(),
-                });
-              },
-            }),
-            wizardFormatSelect({
-              value: subFormat,
-              disabled: isSubSkipped,
-              onChange: function (e) {
-                updateNestedAnswer(stepDef, subPath, {
-                  action: "accept",
-                  format: e.target.value || null,
-                });
-              },
-            }),
-            h("button", {
-              type: "button",
-              className: "btn btn-sm btn-secondary",
-              title: isSubSkipped ? "Include sub-field" : "Skip sub-field",
-              onClick: function () {
-                updateNestedAnswer(stepDef, subPath, {
-                  action: isSubSkipped ? "accept" : "skip",
-                  target: inferSubFieldTarget(subPath),
-                });
-              },
-            }, isSubSkipped ? "Undo" : "Skip")
+            !isSubSkipped && (displayFormat === "date" || displayFormat === "number" || (subAns && subAns.format === "round"))
+              ? h(FormatOptionExtras, {
+                field: {
+                  format: (subAns && subAns.format) || displayFormat,
+                  outputFormat: subAns && subAns.outputFormat,
+                  precision: subAns && subAns.precision,
+                },
+                compact: true,
+                onPatch: function (patch) {
+                  updateNestedAnswer(stepDef, subPath, Object.assign({ action: "accept" }, patch));
+                },
+              })
+              : null
           );
         }),
         h("button", {
@@ -2362,19 +2971,44 @@
               h("label", { className: "wizard-field-map-label", for: "wizard-format-" + step }, "Format"),
               wizardFormatSelect({
                 id: "wizard-format-" + step,
-                value: simpleFormat,
+                value: currentAnswer && currentAnswer.format === "round" ? "number" : simpleFormat,
                 onChange: function (e) {
-                  saveStepAnswer(stepDef, {
+                  var fmt = e.target.value || null;
+                  var patch = {
                     kind: "simple",
                     action: "accept",
                     source: stepDef.field,
                     target: destinationName || simpleInferred.targetField,
                     type: simpleInferred.type,
-                    format: e.target.value || null,
-                  });
+                    format: fmt,
+                  };
+                  if (fmt === "date") patch.outputFormat = (currentAnswer && currentAnswer.outputFormat) || "YYYY-MM-DD";
+                  if (fmt === "number" && MF) Object.assign(patch, MF.applyNumberFormatUi("plain"));
+                  if (fmt !== "number" && fmt !== "round") patch.precision = "";
+                  saveStepAnswer(stepDef, patch);
                 },
               })
             ) : null,
+            !isSkipped && stepDef.kind === "simple" && (simpleFormat === "date" || simpleFormat === "number" || (currentAnswer && currentAnswer.format === "round"))
+              ? h(FormatOptionExtras, {
+                field: {
+                  format: (currentAnswer && currentAnswer.format) || simpleFormat,
+                  outputFormat: currentAnswer && currentAnswer.outputFormat,
+                  precision: currentAnswer && currentAnswer.precision,
+                },
+                compact: false,
+                onPatch: function (patch) {
+                  saveStepAnswer(stepDef, Object.assign({
+                    kind: "simple",
+                    action: "accept",
+                    source: stepDef.field,
+                    target: destinationName || simpleInferred.targetField,
+                    type: simpleInferred.type,
+                    format: (currentAnswer && currentAnswer.format) || simpleFormat,
+                  }, patch));
+                },
+              })
+              : null,
             fieldInfo ? h("div", { className: "text-sm text-muted" },
               "Type: " + fieldInfo.type +
               (stepDef.subFieldPaths && stepDef.subFieldPaths.length
@@ -2536,13 +3170,12 @@
     var _useState18 = useState([]), undoStack = _useState18[0], setUndoStack = _useState18[1];
     var _useState19 = useState([]), redoStack = _useState19[0], setRedoStack = _useState19[1];
     var _useState20 = useState(function () {
-      try {
-        var w = localStorage.getItem("jt-source-width");
-        return w ? Math.min(600, Math.max(260, parseInt(w, 10))) : 360;
-      } catch (e) {
-        return 360;
-      }
+      return readStoredPanelWidth("jt-source-width", 360, 260, 640);
     }), sourcePanelWidth = _useState20[0], setSourcePanelWidth = _useState20[1];
+    var _useState20b = useState(function () {
+      return readStoredPanelWidth("jt-preview-width", 350, 250, 600);
+    }), previewPanelWidth = _useState20b[0], setPreviewPanelWidth = _useState20b[1];
+    var _useState20c = useState(false), helpOpen = _useState20c[0], setHelpOpen = _useState20c[1];
     var computeWarningAck = useRef(false);
     var skipVisualCodeSyncRef = useRef(false);
     var codeSnapshotRef = useRef(null);
@@ -3042,27 +3675,25 @@
     }
 
     function handleSourceResizeStart(e) {
-      e.preventDefault();
-      var startX = e.clientX;
-      var startW = sourcePanelWidth;
-      var currentW = startW;
-      function onMove(ev) {
-        currentW = Math.min(640, Math.max(260, startW + (ev.clientX - startX)));
-        setSourcePanelWidth(currentW);
-      }
-      function onUp() {
-        try {
-          localStorage.setItem("jt-source-width", String(currentW));
-        } catch (err) { /* ignore */ }
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      }
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
+      startPanelResize(e, {
+        getStartWidth: function () { return sourcePanelWidth; },
+        onWidth: setSourcePanelWidth,
+        storageKey: "jt-source-width",
+        min: 260,
+        max: 640,
+        direction: 1,
+      });
+    }
+
+    function handlePreviewResizeStart(e) {
+      startPanelResize(e, {
+        getStartWidth: function () { return previewPanelWidth; },
+        onWidth: setPreviewPanelWidth,
+        storageKey: "jt-preview-width",
+        min: 250,
+        max: 600,
+        direction: 1,
+      });
     }
 
     function clearSavedData() {
@@ -3247,6 +3878,12 @@
             onClick: clearSavedData,
             "data-tooltip": "Clear auto-saved draft",
           }, "Clear draft") : null,
+          h("button", {
+            className: "btn btn-icon btn-secondary",
+            onClick: function () { setHelpOpen(true); },
+            "data-tooltip": "Help & documentation",
+            title: "Help",
+          }, "?"),
           // Theme toggle
           h("button", {
             className: "btn btn-icon btn-secondary",
@@ -3322,6 +3959,11 @@
             )
           )
         ),
+        collapsedPanels.preview ? null : h("div", {
+          className: "resize-handle resize-handle-preview",
+          onMouseDown: handlePreviewResizeStart,
+          title: "Drag to resize preview panel",
+        }),
         h(PreviewPanel, {
           output: previewOutput,
           errors: previewErrors,
@@ -3332,8 +3974,18 @@
           onLoadExpected: triggerExpectedLoad,
           collapsed: collapsedPanels.preview,
           onToggleCollapse: function () { togglePanel("preview"); },
-        })
+          panelStyle: {
+            width: previewPanelWidth,
+            minWidth: previewPanelWidth,
+            maxWidth: previewPanelWidth,
+            flexShrink: 0,
+          },
+        }),
       ),
+      h(HelpPanel, {
+        open: helpOpen,
+        onClose: function () { setHelpOpen(false); },
+      }),
       // Wizard modal
       h(WizardModal, {
         open: wizardOpen,

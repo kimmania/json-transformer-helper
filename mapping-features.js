@@ -73,12 +73,61 @@
     },
   ];
 
+  var DATE_OUTPUT_PRESETS = [
+    { value: "YYYY-MM-DD", label: "YYYY-MM-DD" },
+    { value: "MM/DD/YYYY", label: "MM/DD/YYYY" },
+    { value: "MMMM DD, YYYY", label: "MMMM DD, YYYY" },
+    { value: "MM/DD/YYYY hh:mm AMPM", label: "MM/DD/YYYY hh:mm AMPM" },
+    { value: "MMMM", label: "Month name (MMMM)" },
+    { value: "YYYY", label: "Year (YYYY)" },
+  ];
+
+  var NUMBER_FORMAT_OPTIONS = [
+    { value: "plain", label: "Plain number" },
+    { value: "integer", label: "Integer (0 decimals)" },
+    { value: "decimal2", label: "2 decimal places" },
+    { value: "decimal4", label: "4 decimal places" },
+  ];
+
+  function numberFormatUiValue(field) {
+    if (!field) return "plain";
+    if (field.format === "round") {
+      if (field.precision === 0 || field.precision === "0") return "integer";
+      if (field.precision === 2 || field.precision === "2") return "decimal2";
+      if (field.precision === 4 || field.precision === "4") return "decimal4";
+      return "decimal2";
+    }
+    if (field.format === "number") return "plain";
+    return "plain";
+  }
+
+  function applyNumberFormatUi(uiValue) {
+    switch (uiValue) {
+      case "integer":
+        return { format: "round", precision: 0 };
+      case "decimal2":
+        return { format: "round", precision: 2 };
+      case "decimal4":
+        return { format: "round", precision: 4 };
+      default:
+        return { format: "number", precision: "" };
+    }
+  }
+
+  function dateOutputPresetValue(outputFormat) {
+    if (!outputFormat) return "YYYY-MM-DD";
+    var found = DATE_OUTPUT_PRESETS.some(function (p) { return p.value === outputFormat; });
+    return found ? outputFormat : "__custom__";
+  }
+
   function defaultVisualField(overrides) {
     return Object.assign({
       target: "",
       source: "",
       type: "auto",
       format: "",
+      outputFormat: "",
+      precision: "",
       default: "",
       kind: "simple",
       coalesce: "",
@@ -220,6 +269,9 @@
     if (f.type && f.type !== "auto") fieldDef.type = f.type;
     if (f.format) fieldDef.format = f.format;
     if (f.outputFormat) fieldDef.outputFormat = f.outputFormat;
+    if (f.precision !== "" && f.precision != null && !isNaN(Number(f.precision))) {
+      fieldDef.precision = Number(f.precision);
+    }
     if (f.default !== undefined && f.default !== "") fieldDef.default = f.default;
     if (f.template) fieldDef.template = f.template;
     if (f.value !== undefined && f.value !== "") fieldDef.value = f.value;
@@ -431,6 +483,7 @@
       type: def.type || "auto",
       format: def.format || "",
       outputFormat: def.outputFormat || "",
+      precision: def.precision != null ? def.precision : "",
       default: def.default != null ? String(def.default) : "",
       template: def.template != null ? String(def.template) : "",
       value: "value" in def ? String(def.value) : "",
@@ -640,6 +693,11 @@
 
   global.MappingFeatures = {
     COMPUTE_TEMPLATES: COMPUTE_TEMPLATES,
+    DATE_OUTPUT_PRESETS: DATE_OUTPUT_PRESETS,
+    NUMBER_FORMAT_OPTIONS: NUMBER_FORMAT_OPTIONS,
+    numberFormatUiValue: numberFormatUiValue,
+    applyNumberFormatUi: applyNumberFormatUi,
+    dateOutputPresetValue: dateOutputPresetValue,
     defaultVisualField: defaultVisualField,
     buildMappingFromVisualFields: buildMappingFromVisualFields,
     buildFullMapping: buildFullMapping,

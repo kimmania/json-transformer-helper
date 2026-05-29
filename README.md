@@ -17,12 +17,13 @@ A standalone static web app for building [json-transformer](https://github.com/k
 ### Data Loading
 - **File Picker** — Load any JSON file via file picker
 - **Sample Data** — 2 bundled sample datasets (Employees with nested objects, Orders with arrays) for immediate testing
+- **CLI Samples** — Dropdown loads official [json-transformer](https://github.com/kimmania/json-transformer) mapping + test data pairs from the `samples/` folder (requires a local HTTP server; see Quick Start)
 - **Data Inspector** — Shows record count, field count, types, and statistics
 
 ### Export and Import
-- **Export Mapping** — Download as `.json` or `.js` file compatible with the json-transformer CLI
+- **Export Mapping** — Download as `.json` or `.js` in the same shape the CLI expects (`id`, `version`, `passthrough`, `fields`, optional `schema` / `dictionaries`)
 - **Export Output** — Download transformed data as JSON
-- **Import Mapping** — Load existing `.json` or `.js` mapping files
+- **Import Mapping** — Load existing `.json` or `.js` mapping files from the CLI repo (e.g. `mapping-nested.json`, `mapping-employee.js`). Simple mappings open in the visual editor; advanced features (conditions, templates, `groupBy`, etc.) stay in JSON/JS mode for full fidelity
 - **Copy to Clipboard** — Copy mapping or output text
 
 ### UI/UX
@@ -33,12 +34,15 @@ A standalone static web app for building [json-transformer](https://github.com/k
 
 ## Quick Start
 
-1. Open `index.html` in your browser (or serve via any HTTP server)
-2. Click "Load Data" to load a JSON file, or pick a sample dataset from the dropdown
-3. Use the **Visual** editor to add field mappings, or switch to **JSON**/**JS** mode for direct editing
-4. See live preview updates in the right panel as you work
-5. Click "Wizard" for a guided step-by-step mapping experience
-6. Export your mapping when ready
+1. Open `index.html` in your browser, or run `python3 -m http.server 8888` and visit http://localhost:8888 (needed for **CLI Samples** and optional auto-load of `samples/`)
+2. Click "Load Data" to load a JSON file, use **Sample Data...**, or choose **CLI Samples...** to load a mapping + test JSON together
+3. Use **Import** on the mapping panel to load a `.json` / `.js` file from disk (works on `file://` without a server)
+4. Use the **Visual** editor to add field mappings, or switch to **JSON**/**JS** mode for direct editing
+5. See live preview updates in the right panel as you work
+6. Click "Wizard" for a guided step-by-step mapping experience
+7. **Export** your mapping when ready — use it with `node cli.js transform -d data.json -m mapping.js`
+
+The `samples/` directory contains copies of mapping and test files from the json-transformer project. Re-copy from `../json-transformer` when upstream samples change.
 
 ## Technical Details
 

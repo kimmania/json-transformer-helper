@@ -128,12 +128,86 @@
     if (f.source) fieldDef.from = f.source;
     if (f.type && f.type !== "auto") fieldDef.type = f.type;
     if (f.format) fieldDef.format = f.format;
+    if (f.outputFormat) fieldDef.outputFormat = f.outputFormat;
     if (f.default !== undefined && f.default !== "") fieldDef.default = f.default;
+    if (f.template) fieldDef.template = f.template;
+    if (f.value !== undefined && f.value !== "") fieldDef.value = f.value;
     var coalesce = parseCoalesce(f.coalesce);
     if (coalesce && coalesce.length) fieldDef.coalesce = coalesce;
     var map = parseMapPairs(f.mapPairs);
     if (map) fieldDef.map = map;
     return fieldDef;
+  }
+
+  function fieldDefIsAdvanced(def) {
+    if (!def || typeof def !== "object") return false;
+    if (def.if || def.and || def.or || def.not) return true;
+    if (def.template !== undefined || "value" in def) return true;
+    if (def.groupBy || def.flatten || def.filter || def.distinct || def.sortBy) return true;
+    if (typeof def.compute === "function" || typeof def.compute === "string") return true;
+    if (def.fields) {
+      return Object.keys(def.fields).some(function (k) {
+        return fieldDefIsAdvanced(def.fields[k]);
+      });
+    }
+    return false;
+  }
+
+  function mappingRequiresCodeEditor(mapping) {
+    if (!mapping || typeof mapping !== "object") return false;
+    if (mapping.schema || mapping.dictionaries) return true;
+    if (mapping.passthrough && typeof mapping.passthrough === "object") return true;
+    if (!mapping.fields || typeof mapping.fields !== "object") return false;
+    return Object.keys(mapping.fields).some(function (k) {
+      return fieldDefIsAdvanced(mapping.fields[k]);
+    });
+  }
+
+  function stripModuleWrapper(text) {
+    var clean = String(text).trim();
+    clean = clean.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, "");
+    clean = clean.replace(/^export\s+default\s+/m, "").trim();
+    if (clean.endsWith(";")) clean = clean.slice(0, -1);
+    return clean;
+  }
+
+  function parseMappingModule(text) {
+    var clean = stripModuleWrapper(text);
+    return new Function("return (" + clean + ")")();
+  }
+
+  function extractMappingMeta(mapping) {
+    if (!mapping || typeof mapping !== "object") return {};
+    return {
+      id: mapping.id,
+      version: mapping.version,
+      passthrough: mapping.passthrough,
+      schema: mapping.schema,
+      dictionaries: mapping.dictionaries,
+    };
+  }
+
+  function applyMappingMeta(mapping, meta) {
+    if (!mapping || !meta) return mapping;
+    if (meta.id) mapping.id = meta.id;
+    if (meta.version) mapping.version = meta.version;
+    if (meta.schema) mapping.schema = meta.schema;
+    if (meta.dictionaries) mapping.dictionaries = meta.dictionaries;
+    if (meta.passthrough !== undefined && meta.passthrough !== null) {
+      mapping.passthrough = meta.passthrough;
+    }
+    return mapping;
+  }
+
+  function buildFullMapping(fields, options) {
+    var mapping = buildMappingFromVisualFields(fields, options);
+    return applyMappingMeta(mapping, options && options.meta);
+  }
+
+  function passthroughToBool(passthrough) {
+    if (passthrough === true) return true;
+    if (passthrough && typeof passthrough === "object") return true;
+    return false;
   }
 
   function buildNestedFieldsDef(nestedFields) {
@@ -151,10 +225,13 @@
     if (f.kind === "forEach") {
       var path = f.forEachPath || f.source;
       if (!path) return null;
-      return {
+      var fe = {
         forEach: path,
         fields: buildNestedFieldsDef(f.nestedFields),
       };
+      if (f.groupBy) fe.groupBy = f.groupBy;
+      if (f.flatten) fe.flatten = f.flatten;
+      return fe;
     }
 
     if (f.kind === "nested") {
@@ -180,6 +257,14 @@
   function defToVisualField(target, def) {
     if (!def || typeof def !== "object") return defaultVisualField({ target: target });
 
+    if (fieldDefIsAdvanced(def) && def.forEach === undefined && !(def.fields && !def.from)) {
+      return defaultVisualField({
+        target: target,
+        kind: "advanced",
+        source: "",
+      });
+    }
+
     if (def.forEach !== undefined && def.fields) {
       var nested = [];
       Object.keys(def.fields).forEach(function (k) {
@@ -191,6 +276,8 @@
         kind: "forEach",
         forEachPath: def.forEach,
         source: def.forEach,
+        groupBy: def.groupBy || "",
+        flatten: def.flatten || "",
         nestedFields: nested,
       });
     }
@@ -225,7 +312,10 @@
       source: Array.isArray(def.from) ? def.from[0] : (def.from || ""),
       type: def.type || "auto",
       format: def.format || "",
+      outputFormat: def.outputFormat || "",
       default: def.default != null ? String(def.default) : "",
+      template: def.template != null ? String(def.template) : "",
+      value: "value" in def ? String(def.value) : "",
     });
     if (Array.isArray(def.coalesce)) vf.coalesce = def.coalesce.join(", ");
     if (def.map && typeof def.map === "object") {
@@ -238,13 +328,13 @@
     options = options || {};
     var out = {};
     (fields || []).forEach(function (f) {
-      if (!f.target) return;
+      if (!f.target || f.kind === "advanced") return;
       var def = visualFieldToDef(f);
       if (def) out[f.target] = def;
     });
     var mapping = { fields: out };
-    if (options.passthrough) mapping.passthrough = true;
-    return mapping;
+    if (options.passthrough === true) mapping.passthrough = true;
+    return applyMappingMeta(mapping, options.meta);
   }
 
   function visualFieldsFromMapping(mapping) {
@@ -254,6 +344,32 @@
       list.push(defToVisualField(target, mapping.fields[target]));
     });
     return list;
+  }
+
+  function fieldSummaryKind(def) {
+    if (!def || typeof def !== "object") return "unknown";
+    if (fieldDefIsAdvanced(def)) return "advanced";
+    if (def.forEach !== undefined) return "forEach";
+    if (def.fields && !def.from) return "nested";
+    if (typeof def.compute === "function" || typeof def.compute === "string") return "compute";
+    if (def.if) return "condition";
+    return "simple";
+  }
+
+  function fieldSummaryFromMapping(mapping) {
+    if (!mapping || !mapping.fields) return [];
+    return Object.keys(mapping.fields).map(function (target) {
+      var def = mapping.fields[target];
+      return {
+        target: target,
+        kind: fieldSummaryKind(def),
+        label: fieldSummaryKind(def) === "advanced" || def.if
+          ? "condition / advanced"
+          : def.from
+            ? (Array.isArray(def.from) ? def.from.join(", ") : String(def.from))
+            : "",
+      };
+    });
   }
 
   function pathExistsInData(data, path) {
@@ -373,10 +489,19 @@
     COMPUTE_TEMPLATES: COMPUTE_TEMPLATES,
     defaultVisualField: defaultVisualField,
     buildMappingFromVisualFields: buildMappingFromVisualFields,
+    buildFullMapping: buildFullMapping,
     visualFieldsFromMapping: visualFieldsFromMapping,
+    fieldSummaryFromMapping: fieldSummaryFromMapping,
     visualFieldToDef: visualFieldToDef,
     validateVisualFields: validateVisualFields,
     mappingHasCompute: mappingHasCompute,
+    mappingRequiresCodeEditor: mappingRequiresCodeEditor,
+    parseMappingModule: parseMappingModule,
+    stripModuleWrapper: stripModuleWrapper,
+    extractMappingMeta: extractMappingMeta,
+    applyMappingMeta: applyMappingMeta,
+    passthroughToBool: passthroughToBool,
+    fieldDefIsAdvanced: fieldDefIsAdvanced,
     getSampleValuesForPath: getSampleValuesForPath,
     diffRecords: diffRecords,
     parseSourceList: parseSourceList,

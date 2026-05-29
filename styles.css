@@ -1311,6 +1311,67 @@ input:focus, select:focus, textarea:focus {
   color: var(--text-inverse);
 }
 
+.modal-wizard {
+  max-width: 640px;
+  width: min(640px, 92vw);
+}
+
+.wizard-modal-body {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+}
+
+.wizard-kind-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.wizard-subfields {
+  margin: 12px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.wizard-subfields-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 10px;
+}
+
+.wizard-subfield-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(140px, 1.2fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.wizard-subfield-source {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wizard-subfield-source .font-mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Loading Indicator ─────────────────────────────────────────────── */
 
 .loading-spinner {

@@ -1343,6 +1343,167 @@
     );
   }
 
+  // ── Wizard helpers (steps, forEach / nested sub-mapping) ───────────
+
+  function buildWizardSteps(inspection) {
+    if (!inspection || !inspection.fields) return [];
+    var allFields = Object.keys(inspection.fields);
+    var arrayRoots = {};
+    allFields.forEach(function (f) {
+      if (f.indexOf(".") < 0 && inspection.fields[f].type === "array") {
+        arrayRoots[f] = allFields.filter(function (x) { return x.indexOf(f + ".") === 0; });
+      }
+    });
+
+    var nestedRoots = {};
+    allFields.forEach(function (f) {
+      if (f.indexOf(".") < 0) return;
+      var root = f.split(".")[0];
+      if (arrayRoots[root]) return;
+      if (!nestedRoots[root]) nestedRoots[root] = [];
+      nestedRoots[root].push(f);
+    });
+
+    var subToArrayRoot = {};
+    Object.keys(arrayRoots).forEach(function (root) {
+      arrayRoots[root].forEach(function (sub) { subToArrayRoot[sub] = root; });
+    });
+
+    var nestedEmitted = {};
+    var consumed = {};
+    var steps = [];
+
+    allFields.forEach(function (f) {
+      if (consumed[f]) return;
+
+      if (subToArrayRoot[f]) return;
+
+      if (arrayRoots[f] !== undefined) {
+        arrayRoots[f].forEach(function (sub) { consumed[sub] = true; });
+        consumed[f] = true;
+        steps.push({
+          kind: "forEach",
+          field: f,
+          subFieldPaths: arrayRoots[f],
+        });
+        return;
+      }
+
+      if (f.indexOf(".") >= 0) {
+        var root = f.split(".")[0];
+        if (arrayRoots[root]) {
+          consumed[f] = true;
+          return;
+        }
+        var group = nestedRoots[root];
+        if (group && !nestedEmitted[root]) {
+          nestedEmitted[root] = true;
+          group.forEach(function (sub) { consumed[sub] = true; });
+          steps.push({
+            kind: "nested",
+            parent: root,
+            field: root,
+            subFieldPaths: group,
+          });
+        }
+        return;
+      }
+
+      consumed[f] = true;
+      steps.push({ kind: "simple", field: f });
+    });
+
+    return steps;
+  }
+
+  function relativeSubSource(parentKind, parentField, subPath) {
+    if (parentKind === "forEach") {
+      return subPath.slice(parentField.length + 1);
+    }
+    return subPath;
+  }
+
+  function inferSubFieldTarget(subPath) {
+    var leaf = subPath.split(".").pop() || subPath;
+    return JsonTransformer.toCamelCase(leaf);
+  }
+
+  function defaultNestedAnswers(stepDef, inspection) {
+    var parentKind = stepDef.kind;
+    var parentField = stepDef.field || stepDef.parent;
+    return (stepDef.subFieldPaths || []).map(function (subPath) {
+      var inf = JsonTransformer.inferFieldDefaults(inspection, subPath);
+      return {
+        field: subPath,
+        action: "accept",
+        source: relativeSubSource(parentKind, parentField, subPath),
+        target: inferSubFieldTarget(subPath),
+        type: inf.type,
+        format: inf.format,
+      };
+    });
+  }
+
+  function buildSubFieldsMap(nestedAnswers, parentKind, parentField) {
+    var sub = {};
+    (nestedAnswers || []).forEach(function (a) {
+      if (a.action === "skip") return;
+      var target = a.target || inferSubFieldTarget(a.field);
+      var def = {
+        from: a.source || relativeSubSource(parentKind, parentField, a.field),
+      };
+      if (a.type && a.type !== "auto") def.type = a.type;
+      if (a.format) def.format = a.format;
+      if (a.default !== undefined) def.default = a.default;
+      sub[target] = def;
+    });
+    return sub;
+  }
+
+  function buildMappingFromAnswers(ans, pt, inspection) {
+    var fields = {};
+    (ans || []).forEach(function (a) {
+      if (a.action === "skip") return;
+      if (a.kind === "forEach") {
+        var feTarget = a.target || a.field;
+        var nested = a.nestedAnswers && a.nestedAnswers.length
+          ? a.nestedAnswers
+          : defaultNestedAnswers({ kind: "forEach", field: a.field, subFieldPaths: [] }, inspection);
+        fields[feTarget] = {
+          forEach: a.forEachPath || a.field,
+          fields: buildSubFieldsMap(
+            a.nestedAnswers && a.nestedAnswers.length ? a.nestedAnswers : nested,
+            "forEach",
+            a.field
+          ),
+        };
+        return;
+      }
+      if (a.kind === "nested") {
+        var nestTarget = a.target || a.parent || a.field;
+        fields[nestTarget] = {
+          fields: buildSubFieldsMap(a.nestedAnswers || [], "nested", nestTarget),
+        };
+        return;
+      }
+      var target = a.target || JsonTransformer.toCamelCase(a.field.replace(/\./g, "_"));
+      var fieldDef = { from: a.source || a.field };
+      if (a.type && a.type !== "auto") fieldDef.type = a.type;
+      if (a.format) fieldDef.format = a.format;
+      if (a.default !== undefined) fieldDef.default = a.default;
+      fields[target] = fieldDef;
+    });
+    var mapping = { fields: fields };
+    if (pt) mapping.passthrough = true;
+    return mapping;
+  }
+
+  function wizardStepLabel(stepDef) {
+    if (stepDef.kind === "forEach") return stepDef.field + " (array)";
+    if (stepDef.kind === "nested") return stepDef.parent + " (nested object)";
+    return stepDef.field;
+  }
+
   // ── Wizard Modal ───────────────────────────────────────────────────
 
   function WizardModal(props) {
@@ -1352,14 +1513,18 @@
     var inspection = props.inspection;
     var onComplete = props.onComplete;
 
+    var wizardSteps = useMemo(function () {
+      return buildWizardSteps(inspection);
+    }, [inspection]);
+
     var _useState = useState(0), step = _useState[0], setStep = _useState[1];
     var _useState2 = useState([]), answers = _useState2[0], setAnswers = _useState2[1];
     var _useState3 = useState(false), passthrough = _useState3[0], setPassthrough = _useState3[1];
 
-    var fieldNames = inspection ? Object.keys(inspection.fields || {}) : [];
-    var reviewStep = fieldNames.length + 1;
-    var previewStep = fieldNames.length + 2;
-    var totalSteps = fieldNames.length + 3; // intro + fields + review + preview
+    var fieldStepCount = wizardSteps.length;
+    var reviewStep = fieldStepCount + 1;
+    var previewStep = fieldStepCount + 2;
+    var totalSteps = fieldStepCount + 3;
 
     useEffect(function () {
       if (open) {
@@ -1371,60 +1536,137 @@
 
     if (!open) return null;
 
+    function getAnswerForStep(stepDef) {
+      var key = stepDef.kind === "nested" ? stepDef.parent : stepDef.field;
+      return answers.find(function (a) {
+        return a.kind === stepDef.kind && (a.field === key || a.parent === key);
+      });
+    }
+
+    function saveStepAnswer(stepDef, patch) {
+      var key = stepDef.kind === "nested" ? stepDef.parent : stepDef.field;
+      var newAnswers = answers.slice();
+      var idx = newAnswers.findIndex(function (a) {
+        return a.kind === stepDef.kind && (a.field === key || a.parent === key);
+      });
+      var base = {
+        kind: stepDef.kind,
+        field: stepDef.field || stepDef.parent,
+        parent: stepDef.parent,
+        action: "accept",
+      };
+      if (idx >= 0) {
+        newAnswers[idx] = Object.assign({}, newAnswers[idx], patch);
+      } else {
+        newAnswers.push(Object.assign(base, patch));
+      }
+      setAnswers(newAnswers);
+    }
+
     function acceptAllRemaining(fromIndex) {
       var newAnswers = answers.slice();
-      for (var i = fromIndex; i < fieldNames.length; i++) {
-        var fn = fieldNames[i];
-        if (newAnswers.find(function (a) { return a.field === fn; })) continue;
-        var inferred = JsonTransformer.inferFieldDefaults(inspection, fn);
-        newAnswers.push({
-          field: fn,
-          action: "accept",
-          source: fn,
-          target: inferred.targetField,
-          type: inferred.type,
-          format: inferred.format,
-        });
+      for (var i = fromIndex; i < wizardSteps.length; i++) {
+        var stepDef = wizardSteps[i];
+        var key = stepDef.kind === "nested" ? stepDef.parent : stepDef.field;
+        if (newAnswers.find(function (a) {
+          return a.kind === stepDef.kind && (a.field === key || a.parent === key);
+        })) continue;
+
+        if (stepDef.kind === "forEach") {
+          newAnswers.push({
+            kind: "forEach",
+            field: stepDef.field,
+            action: "accept",
+            target: JsonTransformer.toCamelCase(stepDef.field),
+            forEachPath: stepDef.field,
+            nestedAnswers: defaultNestedAnswers(stepDef, inspection),
+          });
+        } else if (stepDef.kind === "nested") {
+          newAnswers.push({
+            kind: "nested",
+            field: stepDef.parent,
+            parent: stepDef.parent,
+            action: "accept",
+            target: JsonTransformer.toCamelCase(stepDef.parent),
+            nestedAnswers: defaultNestedAnswers(stepDef, inspection),
+          });
+        } else {
+          var inferred = JsonTransformer.inferFieldDefaults(inspection, stepDef.field);
+          newAnswers.push({
+            kind: "simple",
+            field: stepDef.field,
+            action: "accept",
+            source: stepDef.field,
+            target: inferred.targetField,
+            type: inferred.type,
+            format: inferred.format,
+          });
+        }
       }
       setAnswers(newAnswers);
       showToast("Defaults applied to remaining fields", "success", 2500);
     }
 
-    function handleFieldAnswer(fieldName, answer) {
-      var newAnswers = answers.slice();
-      var existing = newAnswers.find(function (a) { return a.field === fieldName; });
-      if (existing) {
-        Object.assign(existing, answer);
-      } else {
-        newAnswers.push(Object.assign({ field: fieldName }, answer));
-      }
-      setAnswers(newAnswers);
-    }
-
     function handleNext() {
-      if (step >= 1 && step <= fieldNames.length) {
-        var fn = fieldNames[step - 1];
-        var ans = answers.find(function (a) { return a.field === fn; });
+      if (step >= 1 && step <= fieldStepCount) {
+        var stepDef = wizardSteps[step - 1];
+        var ans = getAnswerForStep(stepDef);
         if (!ans || ans.action !== "skip") {
-          var inf = JsonTransformer.inferFieldDefaults(inspection, fn);
-          if (!ans) {
-            handleFieldAnswer(fn, {
-              action: "accept",
-              source: fn,
-              target: inf.targetField,
-              type: inf.type,
-              format: inf.format,
-            });
-          } else if (!ans.target || !String(ans.target).trim()) {
-            showToast("Enter a destination field name or skip this field", "warning");
-            return;
+          if (stepDef.kind === "forEach") {
+            if (!ans) {
+              saveStepAnswer(stepDef, {
+                action: "accept",
+                target: JsonTransformer.toCamelCase(stepDef.field),
+                forEachPath: stepDef.field,
+                nestedAnswers: stepDef.subFieldPaths.length
+                  ? defaultNestedAnswers(stepDef, inspection)
+                  : [],
+              });
+            } else if (!ans.target || !String(ans.target).trim()) {
+              showToast("Enter a destination name for the array output", "warning");
+              return;
+            } else if (stepDef.subFieldPaths.length && (!ans.nestedAnswers || !ans.nestedAnswers.length)) {
+              saveStepAnswer(stepDef, {
+                nestedAnswers: defaultNestedAnswers(stepDef, inspection),
+              });
+            }
+          } else if (stepDef.kind === "nested") {
+            if (!ans) {
+              saveStepAnswer(stepDef, {
+                action: "accept",
+                target: JsonTransformer.toCamelCase(stepDef.parent),
+                nestedAnswers: defaultNestedAnswers(stepDef, inspection),
+              });
+            } else if (!ans.target || !String(ans.target).trim()) {
+              showToast("Enter a destination name for the nested object", "warning");
+              return;
+            } else if (!ans.nestedAnswers || !ans.nestedAnswers.length) {
+              saveStepAnswer(stepDef, {
+                nestedAnswers: defaultNestedAnswers(stepDef, inspection),
+              });
+            }
+          } else {
+            var inf = JsonTransformer.inferFieldDefaults(inspection, stepDef.field);
+            if (!ans) {
+              saveStepAnswer(stepDef, {
+                kind: "simple",
+                action: "accept",
+                source: stepDef.field,
+                target: inf.targetField,
+                type: inf.type,
+                format: inf.format,
+              });
+            } else if (!ans.target || !String(ans.target).trim()) {
+              showToast("Enter a destination field name or skip this field", "warning");
+              return;
+            }
           }
         }
       }
       if (step < previewStep) {
         setStep(step + 1);
       } else {
-        var mapping = buildMappingFromAnswers(answers, passthrough);
+        var mapping = buildMappingFromAnswers(answers, passthrough, inspection);
         onComplete(mapping, passthrough);
         onClose();
       }
@@ -1434,30 +1676,97 @@
       setStep(Math.max(0, step - 1));
     }
 
-    function buildMappingFromAnswers(ans, pt) {
-      var fields = {};
-      ans.forEach(function (a) {
-        if (a.action === "skip") return;
-        var target = a.target || JsonTransformer.toCamelCase(a.field.replace(/\./g, "_"));
-        var fieldDef = { from: a.source || a.field };
-        if (a.type && a.type !== "auto") fieldDef.type = a.type;
-        if (a.format) fieldDef.format = a.format;
-        if (a.default !== undefined) fieldDef.default = a.default;
-        fields[target] = fieldDef;
-      });
-      var mapping = { fields: fields };
-      if (pt) mapping.passthrough = true;
-      return mapping;
+    function updateNestedAnswer(stepDef, subPath, patch) {
+      var ans = getAnswerForStep(stepDef) || {};
+      var nested = (ans.nestedAnswers || []).slice();
+      var ni = nested.findIndex(function (a) { return a.field === subPath; });
+      var inf = JsonTransformer.inferFieldDefaults(inspection, subPath);
+      var base = {
+        field: subPath,
+        action: "accept",
+        source: relativeSubSource(stepDef.kind, stepDef.field || stepDef.parent, subPath),
+        target: inferSubFieldTarget(subPath),
+        type: inf.type,
+        format: inf.format,
+      };
+      if (ni >= 0) {
+        nested[ni] = Object.assign({}, nested[ni], patch);
+      } else {
+        nested.push(Object.assign(base, patch));
+      }
+      saveStepAnswer(stepDef, { nestedAnswers: nested, action: "accept" });
     }
 
-    // Render steps
+    function renderSubFieldEditor(stepDef) {
+      if (!stepDef.subFieldPaths || !stepDef.subFieldPaths.length) {
+        return h("p", { className: "text-sm text-muted" }, "No object fields detected in sample data.");
+      }
+      var ans = getAnswerForStep(stepDef);
+      return h("div", { className: "wizard-subfields" },
+        h("div", { className: "wizard-subfields-title" },
+          stepDef.kind === "forEach" ? "Map each array item" : "Map nested fields"
+        ),
+        stepDef.subFieldPaths.map(function (subPath) {
+          var subAns = ans && ans.nestedAnswers
+            ? ans.nestedAnswers.find(function (a) { return a.field === subPath; })
+            : null;
+          var isSubSkipped = subAns && subAns.action === "skip";
+          var relSource = relativeSubSource(stepDef.kind, stepDef.field || stepDef.parent, subPath);
+          var dest = isSubSkipped ? "" : ((subAns && subAns.target) || inferSubFieldTarget(subPath));
+          return h("div", { key: subPath, className: "wizard-subfield-row" },
+            h("div", { className: "wizard-subfield-source" },
+              h("span", { className: "font-mono text-sm", title: subPath }, relSource),
+              h("span", { className: "text-sm text-muted" }, " \u2192 ")
+            ),
+            h("input", {
+              className: "mapping-field-input",
+              type: "text",
+              value: dest,
+              disabled: isSubSkipped,
+              placeholder: "output_field",
+              onInput: function (e) {
+                updateNestedAnswer(stepDef, subPath, {
+                  action: "accept",
+                  target: e.target.value.trim(),
+                });
+              },
+            }),
+            h("button", {
+              type: "button",
+              className: "btn btn-sm btn-secondary",
+              title: isSubSkipped ? "Include sub-field" : "Skip sub-field",
+              onClick: function () {
+                updateNestedAnswer(stepDef, subPath, {
+                  action: isSubSkipped ? "accept" : "skip",
+                  target: inferSubFieldTarget(subPath),
+                });
+              },
+            }, isSubSkipped ? "Undo" : "Skip")
+          );
+        }),
+        h("button", {
+          type: "button",
+          className: "btn btn-sm btn-secondary mt-1",
+          onClick: function () {
+            saveStepAnswer(stepDef, {
+              action: "accept",
+              nestedAnswers: defaultNestedAnswers(stepDef, inspection),
+            });
+            showToast("Sub-field defaults applied", "info", 2000);
+          },
+        }, "Use defaults for all sub-fields")
+      );
+    }
+
     function renderStep() {
       if (step === 0) {
-        // Intro
         return h("div", null,
           h("h3", { className: "mb-2" }, "Welcome to the Mapping Wizard"),
           h("p", { className: "mb-2" }, "This wizard will guide you through creating a mapping for your data."),
-          h("p", { className: "mb-2" }, "You have " + inspection.recordCount + " records with " + fieldNames.length + " fields."),
+          h("p", { className: "mb-2" },
+            "You have " + inspection.recordCount + " records with " + fieldStepCount + " mapping step" +
+            (fieldStepCount === 1 ? "" : "s") + " (arrays and nested objects are grouped)."
+          ),
           h("label", { className: "flex items-center gap-2" },
             h("input", {
               type: "checkbox",
@@ -1467,34 +1776,56 @@
             "Include unmapped source fields (passthrough)"
           )
         );
-      } else if (step <= fieldNames.length) {
-        // Field mapping
-        var fieldName = fieldNames[step - 1];
-        var fieldInfo = inspection.fields[fieldName];
-        var currentAnswer = answers.find(function (a) { return a.field === fieldName; });
-        var inferred = JsonTransformer.inferFieldDefaults(inspection, fieldName);
+      }
+
+      if (step <= fieldStepCount) {
+        var stepDef = wizardSteps[step - 1];
+        var fieldInfo = inspection.fields[stepDef.field || stepDef.parent];
+        var currentAnswer = getAnswerForStep(stepDef);
         var isSkipped = currentAnswer && currentAnswer.action === "skip";
-        var destinationName = isSkipped
-          ? ""
-          : ((currentAnswer && currentAnswer.target) || inferred.targetField);
+        var defaultTarget = stepDef.kind === "nested"
+          ? JsonTransformer.toCamelCase(stepDef.parent)
+          : JsonTransformer.inferFieldDefaults(inspection, stepDef.field).targetField;
+        var destinationName = isSkipped ? "" : ((currentAnswer && currentAnswer.target) || defaultTarget);
 
         function saveDestination(target) {
-          handleFieldAnswer(fieldName, {
-            action: "accept",
-            source: fieldName,
-            target: target || inferred.targetField,
-            type: inferred.type,
-            format: inferred.format,
-          });
+          if (stepDef.kind === "forEach") {
+            saveStepAnswer(stepDef, {
+              action: "accept",
+              target: target || defaultTarget,
+              forEachPath: stepDef.field,
+              nestedAnswers: (currentAnswer && currentAnswer.nestedAnswers) ||
+                (stepDef.subFieldPaths.length ? defaultNestedAnswers(stepDef, inspection) : []),
+            });
+          } else if (stepDef.kind === "nested") {
+            saveStepAnswer(stepDef, {
+              action: "accept",
+              target: target || defaultTarget,
+              nestedAnswers: (currentAnswer && currentAnswer.nestedAnswers) ||
+                defaultNestedAnswers(stepDef, inspection),
+            });
+          } else {
+            var inferred = JsonTransformer.inferFieldDefaults(inspection, stepDef.field);
+            saveStepAnswer(stepDef, {
+              kind: "simple",
+              action: "accept",
+              source: stepDef.field,
+              target: target || inferred.targetField,
+              type: inferred.type,
+              format: inferred.format,
+            });
+          }
         }
 
         return h("div", null,
-          h("h3", { className: "mb-2" }, "Field " + step + " of " + fieldNames.length),
+          h("h3", { className: "mb-2" }, "Step " + step + " of " + fieldStepCount),
           h("div", { className: "wizard-field-map" },
             h("div", { className: "wizard-field-map-row" },
               h("label", { className: "wizard-field-map-label" }, "Source"),
-              h("div", { className: "wizard-source-field" }, fieldName)
+              h("div", { className: "wizard-source-field" }, wizardStepLabel(stepDef))
             ),
+            stepDef.kind === "forEach" ? h("div", { className: "wizard-kind-badge" }, "Array mapping (forEach)") : null,
+            stepDef.kind === "nested" ? h("div", { className: "wizard-kind-badge" }, "Nested object mapping") : null,
             h("div", { className: "wizard-field-map-row" },
               h("label", { className: "wizard-field-map-label", for: "wizard-target-" + step }, "Destination"),
               h("input", {
@@ -1507,48 +1838,65 @@
                 onInput: function (e) { saveDestination(e.target.value.trim()); },
               })
             ),
-            h("div", { className: "text-sm text-muted" },
-              "Type: " + (fieldInfo ? fieldInfo.type : "unknown") +
-              (fieldInfo && fieldInfo.distinctValues ? " | Suggested: " + inferred.targetField : "")
-            )
+            fieldInfo ? h("div", { className: "text-sm text-muted" },
+              "Type: " + fieldInfo.type +
+              (stepDef.subFieldPaths && stepDef.subFieldPaths.length
+                ? " | " + stepDef.subFieldPaths.length + " sub-field(s)"
+                : "")
+            ) : null
           ),
+          !isSkipped && (stepDef.kind === "forEach" || stepDef.kind === "nested")
+            ? renderSubFieldEditor(stepDef)
+            : null,
           h("div", { className: "wizard-options" },
             h("button", {
               type: "button",
               className: "wizard-option" + (!isSkipped && currentAnswer ? " selected" : ""),
-              onClick: function () { saveDestination(inferred.targetField); },
+              onClick: function () { saveDestination(defaultTarget); },
             },
               h("span", null, "\u2705"),
-              h("span", null, "Use suggested name: " + inferred.targetField)
+              h("span", null, "Use suggested name: " + defaultTarget)
             ),
             h("button", {
               type: "button",
               className: "wizard-option" + (isSkipped ? " selected" : ""),
-              onClick: function () { handleFieldAnswer(fieldName, { action: "skip" }); },
+              onClick: function () {
+                saveStepAnswer(stepDef, { action: "skip", nestedAnswers: [] });
+              },
             },
               h("span", null, "\u23E9"),
-              h("span", null, "Skip this field")
+              h("span", null, stepDef.kind === "forEach" || stepDef.kind === "nested"
+                ? "Skip this " + (stepDef.kind === "forEach" ? "array" : "object")
+                : "Skip this field")
             )
           ),
           !isSkipped ? h("p", { className: "text-sm text-muted mt-2" },
-            "Edit the destination name above, or use the suggested name."
+            stepDef.kind === "forEach"
+              ? "Configure how each array element maps to the destination object."
+              : stepDef.kind === "nested"
+                ? "Configure fields inside the nested output object."
+                : "Edit the destination name above, or use the suggested name."
           ) : null,
-          step - 1 < fieldNames.length - 1 ? h("button", {
+          step - 1 < fieldStepCount - 1 ? h("button", {
             type: "button",
             className: "btn btn-sm btn-secondary mt-2",
             onClick: function () { acceptAllRemaining(step - 1); },
           }, "Apply defaults to all remaining fields") : null
         );
-      } else if (step === reviewStep) {
-        var mappingReview = buildMappingFromAnswers(answers, passthrough);
+      }
+
+      if (step === reviewStep) {
+        var mappingReview = buildMappingFromAnswers(answers, passthrough, inspection);
         return h("div", null,
           h("h3", { className: "mb-2" }, "Review Your Mapping"),
           h("pre", { className: "code-editor", style: { maxHeight: "280px", overflow: "auto" } },
             JSON.stringify(mappingReview, null, 2)
           )
         );
-      } else if (step === previewStep) {
-        var mappingPreview = buildMappingFromAnswers(answers, passthrough);
+      }
+
+      if (step === previewStep) {
+        var mappingPreview = buildMappingFromAnswers(answers, passthrough, inspection);
         var previewOut = null;
         var previewErr = null;
         if (data && mappingPreview.fields && Object.keys(mappingPreview.fields).length) {
@@ -1561,17 +1909,21 @@
         }
         return h("div", null,
           h("h3", { className: "mb-2" }, "Preview Output"),
-          h("p", { className: "text-sm text-muted mb-2" }, "Sample transform on first " + Math.min(5, (data && data.length) || 0) + " record(s)"),
+          h("p", { className: "text-sm text-muted mb-2" },
+            "Sample transform on first " + Math.min(5, (data && data.length) || 0) + " record(s)"
+          ),
           previewErr ? h("div", { className: "validation-error" }, previewErr)
             : h("pre", { className: "code-editor", style: { maxHeight: "280px", overflow: "auto" } },
                 JSON.stringify(previewOut, null, 2)
               )
         );
       }
+
+      return null;
     }
 
     return h("div", { className: "modal-overlay", onClick: function (e) { if (e.target === e.currentTarget) onClose(); } },
-      h("div", { className: "modal" },
+      h("div", { className: "modal modal-wizard" },
         h("div", { className: "modal-header" },
           h("span", { className: "modal-title" }, "Mapping Wizard"),
           h("button", { className: "btn btn-icon", onClick: onClose }, "\u2715")
@@ -1584,7 +1936,7 @@
             });
           })
         ),
-        h("div", { className: "modal-body" }, renderStep()),
+        h("div", { className: "modal-body wizard-modal-body" }, renderStep()),
         h("div", { className: "modal-footer" },
           h("button", {
             className: "btn btn-secondary",

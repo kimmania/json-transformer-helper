@@ -156,6 +156,35 @@
     return new Function("return " + text)();
   }
 
+  function treeNodeMatchesSearch(path, nodeKey, value, query) {
+    if (!query) return true;
+    var q = query.toLowerCase();
+    if (nodeKey && String(nodeKey).toLowerCase().indexOf(q) >= 0) return true;
+    if (path && String(path).toLowerCase().indexOf(q) >= 0) return true;
+    if (getType(value) === "string" && String(value).toLowerCase().indexOf(q) >= 0) return true;
+    return false;
+  }
+
+  function treeHasMatchingDescendant(value, path, query) {
+    if (!query) return true;
+    if (treeNodeMatchesSearch(path, null, value, query)) return true;
+    var type = getType(value);
+    if (type === "object") {
+      return Object.keys(value).some(function (k) {
+        var childPath = path != null && path !== "" ? path + "." + k : k;
+        return treeNodeMatchesSearch(childPath, k, value[k], query) ||
+          treeHasMatchingDescendant(value[k], childPath, query);
+      });
+    }
+    if (type === "array") {
+      return value.some(function (item, i) {
+        var childPath = path != null && path !== "" ? path + "." + i : String(i);
+        return treeHasMatchingDescendant(item, childPath, query);
+      });
+    }
+    return false;
+  }
+
   function visualFieldsFromMapping(mapping) {
     var visualFields = [];
     if (!mapping || !mapping.fields) return visualFields;
@@ -180,9 +209,19 @@
     var path = props.path;
     var onSelect = props.onSelect;
     var selectedPath = props.selectedPath;
+    var searchQuery = props.searchQuery;
     var depth = props.depth || 0;
 
-    var _useState = useState(depth > 0), expanded = _useState[0], setExpanded = _useState[1];
+    var _useState = useState(depth > 0 || !!searchQuery), expanded = _useState[0], setExpanded = _useState[1];
+
+    useEffect(function () {
+      if (searchQuery) setExpanded(true);
+    }, [searchQuery]);
+
+    if (searchQuery && !treeHasMatchingDescendant(value, path, searchQuery)) {
+      return null;
+    }
+
     var type = getType(value);
     var isExpandable = type === "object" || type === "array";
     var isSelected = path === selectedPath;
@@ -232,6 +271,7 @@
             path: path != null && path !== "" ? path + "." + i : String(i),
             onSelect: onSelect,
             selectedPath: selectedPath,
+            searchQuery: searchQuery,
             depth: depth + 1,
           });
         }) : Object.keys(value).map(function (k) {
@@ -242,6 +282,7 @@
             path: path != null && path !== "" ? path + "." + k : k,
             onSelect: onSelect,
             selectedPath: selectedPath,
+            searchQuery: searchQuery,
             depth: depth + 1,
           });
         })
@@ -259,11 +300,7 @@
     var _useState = useState(""), searchQuery = _useState[0], setSearchQuery = _useState[1];
     var selectedPath = props.selectedPath;
 
-    var filteredData = useMemo(function () {
-      if (!searchQuery || !data) return data;
-      // Simple filter: highlight matching paths (we just show all for now, search is visual)
-      return data;
-    }, [data, searchQuery]);
+    var filteredData = data;
 
     if (!data) {
       return h("div", null,
@@ -282,13 +319,13 @@
       );
     }
 
-    return h("div", { className: "panel" },
+    return h("div", { className: "panel panel-source" },
       h("div", { className: "panel-header" },
         h("span", { className: "panel-title" }, "Source Data"),
         h("span", { className: "text-sm text-muted" }, Array.isArray(data) ? data.length + " records" : "1 object")
       ),
       h("input", {
-        className: "tree-search w-full",
+        className: "tree-search",
         type: "search",
         placeholder: "Search fields...",
         value: searchQuery,
@@ -303,6 +340,7 @@
             path: null,
             onSelect: onSelect,
             selectedPath: selectedPath,
+            searchQuery: searchQuery,
             depth: 0,
           });
         }) : h(TreeNode, {
@@ -312,6 +350,7 @@
           path: null,
           onSelect: onSelect,
           selectedPath: selectedPath,
+          searchQuery: searchQuery,
           depth: 0,
         })
       )
@@ -358,25 +397,27 @@
       ),
       h("div", { className: "mapping-field-actions" },
         h("button", {
+          type: "button",
           className: "btn btn-sm btn-secondary",
           onClick: function () { onMove(index, -1); },
           disabled: index === 0,
           "data-tooltip": "Move up",
         }, "\u25B2"),
         h("button", {
+          type: "button",
           className: "btn btn-sm btn-secondary",
           onClick: function () { onMove(index, 1); },
           disabled: index === (props.totalFields - 1),
           "data-tooltip": "Move down",
         }, "\u25BC"),
         h("button", {
+          type: "button",
           className: "btn btn-sm btn-danger",
           onClick: function () { onRemove(index); },
           "data-tooltip": "Remove",
         }, "\u2715")
       ),
-      // Type selector
-      h("div", { className: "flex gap-2 mt-1" },
+      h("div", { className: "mapping-field-options" },
         h("div", null,
           h("label", { className: "mapping-field-label" }, "Type"),
           h("select", {
@@ -534,8 +575,9 @@
       h("div", { className: "flex justify-between items-center mb-1" },
         h("span", { className: "font-bold text-sm" }, mode === "json" ? "JSON Mapping" : "JS Mapping"),
         h("div", { className: "flex gap-1" },
-          h("button", { className: "btn btn-sm btn-secondary", onClick: formatJson }, "Format"),
+          mode === "json" ? h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: formatJson }, "Format") : null,
           h("button", {
+            type: "button",
             className: "btn btn-sm btn-secondary",
             onClick: function () { copyToClipboard(value); },
           }, "Copy")
@@ -561,6 +603,10 @@
 
     var totalRecords = Array.isArray(output) ? output.length : (output ? 1 : 0);
 
+    useEffect(function () {
+      setRecordIndex(0);
+    }, [output, totalRecords]);
+
     function getDisplayRecord() {
       if (!output) return null;
       if (Array.isArray(output)) {
@@ -569,7 +615,7 @@
       return output;
     }
 
-    return h("div", { className: "panel" },
+    return h("div", { className: "panel panel-preview" },
       h("div", { className: "panel-header" },
         h("span", { className: "panel-title" }, "Preview"),
         errors && errors.length > 0
@@ -578,12 +624,14 @@
       ),
       Array.isArray(output) && output.length > 1 ? h("div", { className: "preview-record-nav" },
         h("button", {
+          type: "button",
           className: "btn btn-sm btn-secondary",
           onClick: function () { setRecordIndex(function (i) { return Math.max(0, i - 1); }); },
           disabled: recordIndex === 0,
         }, "\u25C0"),
         h("span", { className: "preview-record-count" }, "Record " + (recordIndex + 1) + " / " + output.length),
         h("button", {
+          type: "button",
           className: "btn btn-sm btn-secondary",
           onClick: function () { setRecordIndex(function (i) { return Math.min(output.length - 1, i + 1); }); },
           disabled: recordIndex >= output.length - 1,
@@ -595,16 +643,18 @@
               h("div", { className: "empty-state-icon" }, "\uD83D\uDCC1"),
               h("div", { className: "empty-state-text" }, "No output yet"),
               h("div", { className: "empty-state-text" }, "Load data and create a mapping to see results")
-            )
-      ),
-      errors && errors.length > 0 ? h("div", { className: "panel-body", style: { maxHeight: "200px", overflow: "auto" } },
-        h("div", { className: "font-bold text-sm mb-1" }, "Validation Errors"),
-        errors.map(function (err, i) {
-          return h("div", { key: i, className: "validation-error mb-1" },
-            "Row " + (err.row || 0) + ": " + (err.field || "unknown") + " - " + (err.message || "error")
-          );
-        })
-      ) : null
+            ),
+        errors && errors.length > 0 ? h("div", { className: "preview-errors" },
+          h("div", { className: "font-bold text-sm mb-1" }, "Errors"),
+          errors.map(function (err, i) {
+            return h("div", { key: i, className: "validation-error mb-1" },
+              (err.row != null ? "Row " + err.row + ": " : "") +
+              (err.field ? err.field + " - " : "") +
+              (err.message || "error")
+            );
+          })
+        ) : null
+      )
     );
   }
 
@@ -737,6 +787,7 @@
           ),
           h("div", { className: "wizard-options" },
             h("button", {
+              type: "button",
               className: "wizard-option" + (currentAnswer && currentAnswer.action === "accept" ? " selected" : ""),
               onClick: function () { handleFieldAnswer(fieldName, { action: "accept", source: fieldName, target: inferred.targetField, type: inferred.type, format: inferred.format }); },
             },
@@ -744,6 +795,7 @@
               h("span", null, "Accept default: " + fieldName + " \u2192 " + inferred.targetField + " (" + inferred.type + ")")
             ),
             h("button", {
+              type: "button",
               className: "wizard-option" + (currentAnswer && currentAnswer.action === "skip" ? " selected" : ""),
               onClick: function () { handleFieldAnswer(fieldName, { action: "skip" }); },
             },
@@ -922,9 +974,6 @@
           if (ready.schema) {
             var validation = JsonTransformer.validate(sourceData, ready);
             setPreviewErrors(validation.errors || []);
-            if (!validation.valid) {
-              showToast(validation.errors.length + " validation errors found", "warning");
-            }
           } else {
             setPreviewErrors([]);
           }
@@ -974,11 +1023,13 @@
           showToast("Failed to parse JSON: " + err.message, "error");
         } finally {
           setIsLoading(false);
+          e.target.value = "";
         }
       };
       reader.onerror = function () {
         showToast("Failed to read file", "error");
         setIsLoading(false);
+        e.target.value = "";
       };
       reader.readAsText(file);
     }
@@ -1076,6 +1127,9 @@
       if (mode === "json" && editorMode === "visual" && mappingFields.length > 0) {
         var mapping = buildMappingFromVisual(mappingFields);
         setCodeEditorValue(JSON.stringify(mapping, null, 2));
+      } else if (mode === "js" && editorMode === "visual" && mappingFields.length > 0) {
+        var mappingJs = buildMappingFromVisual(mappingFields);
+        setCodeEditorValue(JSON.stringify(mappingJs, null, 2));
       } else if (mode === "visual" && editorMode !== "visual") {
         try {
           var parsed = parseMappingFromCode(codeEditorValue, editorMode);
@@ -1127,6 +1181,8 @@
       setPreviewOutput(null);
       setPreviewErrors([]);
       setSelectedPath("");
+      computeWarningAck.current = false;
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
 
     // Sync code editor value when in visual mode (keep it updated)
@@ -1274,6 +1330,7 @@
 
   // ── Mount ──────────────────────────────────────────────────────────
 
+  setTheme(getTheme());
   preact.render(h(App, null), document.getElementById("app"));
 
 })();

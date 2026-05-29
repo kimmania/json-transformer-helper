@@ -224,6 +224,12 @@ input:focus, select:focus, textarea:focus {
   border-right: 1px solid var(--border-color);
 }
 
+.panel-source .tree-search {
+  flex-shrink: 0;
+  margin: 8px;
+  width: calc(100% - 16px);
+}
+
 .panel-mapping {
   flex: 1;
   min-width: 300px;
@@ -402,6 +408,18 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
 }
 
+.mapping-field-options {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mapping-field-options > div {
+  flex: 1;
+  min-width: 120px;
+}
+
 .mapping-field-actions {
   display: flex;
   gap: 4px;
@@ -471,6 +489,14 @@ input:focus, select:focus, textarea:focus {
 
 /* ── Preview Panel ─────────────────────────────────────────────────── */
 
+.preview-errors {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 .preview-output {
   font-family: var(--font-mono);
   font-size: 13px;
@@ -486,6 +512,7 @@ input:focus, select:focus, textarea:focus {
   padding: 8px 12px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .preview-record-count {

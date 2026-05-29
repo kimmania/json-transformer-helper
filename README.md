@@ -5,11 +5,14 @@ A standalone static web app for building [json-transformer](https://github.com/k
 ## Features
 
 ### Core Functionality
-- **Visual Mapping Editor** — Table-based field mapping UI with add/remove/reorder, type selection, format options, and default values
-- **Source Data Tree Viewer** — Collapsible tree view with color-coded type badges (string, number, boolean, null, object, array)
-- **Live Preview** — Real-time output updates as you modify your mapping
-- **Guided Wizard Mode** — Step-by-step wizard for creating mappings without knowing the format upfront
-- **Free-Form Code Editor** — Direct JSON or JS editing with syntax validation and formatting
+- **Visual Mapping Editor** — Field map, array (`forEach`), nested object, and compute mappings; coalesce, value maps, passthrough toggle, validation hints
+- **Compute Templates** — Pre-built expressions (concat, arithmetic, etc.) plus custom JS with sandboxed preview
+- **Source Data Tree Viewer** — Collapsible tree with search, sample values, click-to-copy paths
+- **Live Preview** — Debounced preview (first N records), expected-output diff, record navigation
+- **Guided Wizard Mode** — Per-field defaults, accept-all-remaining, review + sample output before finish
+- **Free-Form Code Editor** — JSON / JS modes with syntax validation and format
+- **Undo / Redo** — Mapping history in visual mode
+- **Collapsible Panels** — Collapse source, mapping, or preview columns
 
 ### Data Loading
 - **File Picker** — Load any JSON file via file picker
@@ -42,7 +45,8 @@ A standalone static web app for building [json-transformer](https://github.com/k
 - **Framework**: Preact 10.x (inlined, ~11KB minified)
 - **Hooks**: Preact hooks (inlined, ~4KB)
 - **Transform Engine**: Browser-compatible port of json-transformer's `transform.js` (~27KB)
-- **Total Bundle**: ~106KB uncompressed (no build step, no npm dependencies)
+- **Mapping Features**: `mapping-features.js` — build/parse, compute templates, validation (~8KB)
+- **Total Bundle**: ~120KB+ uncompressed (no build step, no npm dependencies)
 - **Browser Support**: Modern browsers (Chrome, Firefox, Safari, Edge)
 - **Offline**: Works fully offline — all assets bundled, zero network requests
 

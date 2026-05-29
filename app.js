@@ -23,6 +23,8 @@
   var useMemo = preact.useMemo;
   var useCallback = preact.useCallback;
 
+  var MF = typeof MappingFeatures !== "undefined" ? MappingFeatures : null;
+
   // ── Sample datasets (bundled) ──────────────────────────────────────
 
   var SAMPLE_EMPLOYEES = [
@@ -138,14 +140,7 @@
   }
 
   function mappingHasCompute(obj) {
-    if (!obj || typeof obj !== "object") return false;
-    if (typeof obj.compute === "function") return true;
-    for (var k in obj) {
-      if (Object.prototype.hasOwnProperty.call(obj, k) && mappingHasCompute(obj[k])) {
-        return true;
-      }
-    }
-    return false;
+    return MF ? MF.mappingHasCompute(obj) : false;
   }
 
   function parseMappingFromCode(text, mode) {
@@ -186,19 +181,13 @@
   }
 
   function visualFieldsFromMapping(mapping) {
-    var visualFields = [];
-    if (!mapping || !mapping.fields) return visualFields;
-    Object.entries(mapping.fields).forEach(function (_a) {
-      var target = _a[0], def = _a[1];
-      visualFields.push({
-        target: target,
-        source: def.from || "",
-        type: def.type || "auto",
-        format: def.format || "",
-        default: def.default != null ? String(def.default) : "",
-      });
-    });
-    return visualFields;
+    return MF ? MF.visualFieldsFromMapping(mapping) : [];
+  }
+
+  function buildMappingFromVisual(fields, passthrough) {
+    return MF
+      ? MF.buildMappingFromVisualFields(fields, { passthrough: !!passthrough })
+      : { fields: {} };
   }
 
   // ── Tree Node Component ────────────────────────────────────────────
@@ -210,6 +199,7 @@
     var onSelect = props.onSelect;
     var selectedPath = props.selectedPath;
     var searchQuery = props.searchQuery;
+    var sourceData = props.sourceData;
     var depth = props.depth || 0;
 
     var _useState = useState(depth > 0 || !!searchQuery), expanded = _useState[0], setExpanded = _useState[1];
@@ -248,6 +238,14 @@
       return null;
     }
 
+    var sampleHint = null;
+    if (path && MF && sourceData && (type === "string" || type === "number" || type === "boolean")) {
+      var samples = MF.getSampleValuesForPath(sourceData, path, 3);
+      if (samples.length) {
+        sampleHint = h("span", { className: "tree-samples", title: "Sample values" }, " eg. " + samples.join(", "));
+      }
+    }
+
     var children = [
       h("div", {
         className: "tree-node-content" + (isSelected ? " selected" : ""),
@@ -257,7 +255,8 @@
         isExpandable ? h("span", { className: "tree-toggle" }, expanded ? "\u25BC" : "\u25B6") : h("span", { className: "tree-toggle" }),
         nodeKey ? h("span", { className: "tree-key" }, nodeKey) : null,
         h("span", { className: "tree-type " + type }, type),
-        renderValue()
+        renderValue(),
+        sampleHint
       )
     ];
 
@@ -272,6 +271,7 @@
             onSelect: onSelect,
             selectedPath: selectedPath,
             searchQuery: searchQuery,
+            sourceData: sourceData,
             depth: depth + 1,
           });
         }) : Object.keys(value).map(function (k) {
@@ -283,6 +283,7 @@
             onSelect: onSelect,
             selectedPath: selectedPath,
             searchQuery: searchQuery,
+            sourceData: sourceData,
             depth: depth + 1,
           });
         })
@@ -297,15 +298,18 @@
   function SourceTreePanel(props) {
     var data = props.data;
     var onSelect = props.onSelect;
+    var collapsed = props.collapsed;
+    var onToggleCollapse = props.onToggleCollapse;
     var _useState = useState(""), searchQuery = _useState[0], setSearchQuery = _useState[1];
     var selectedPath = props.selectedPath;
 
     var filteredData = data;
 
     if (!data) {
-      return h("div", { className: "panel panel-source" },
+      return h("div", { className: "panel panel-source" + (collapsed ? " panel-collapsed" : "") },
         h("div", { className: "panel-header" },
-          h("span", { className: "panel-title" }, "Source Data")
+          h("span", { className: "panel-title" }, collapsed ? "" : "Source Data"),
+          onToggleCollapse ? h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: onToggleCollapse }, collapsed ? "\u25B6" : "\u25C0") : null
         ),
         h("div", { className: "panel-body" },
           h("div", { className: "empty-state" },
@@ -317,11 +321,13 @@
       );
     }
 
-    return h("div", { className: "panel panel-source" },
+    return h("div", { className: "panel panel-source" + (collapsed ? " panel-collapsed" : "") },
       h("div", { className: "panel-header" },
-        h("span", { className: "panel-title" }, "Source Data"),
-        h("span", { className: "text-sm text-muted" }, Array.isArray(data) ? data.length + " records" : "1 object")
+        h("span", { className: "panel-title" }, collapsed ? "Src" : "Source Data"),
+        collapsed ? null : h("span", { className: "text-sm text-muted" }, Array.isArray(data) ? data.length + " records" : "1 object"),
+        onToggleCollapse ? h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: onToggleCollapse }, collapsed ? "\u25B6" : "\u25C0") : null
       ),
+      collapsed ? null : [
       h("input", {
         className: "tree-search",
         type: "search",
@@ -339,6 +345,7 @@
             onSelect: onSelect,
             selectedPath: selectedPath,
             searchQuery: searchQuery,
+            sourceData: data,
             depth: 0,
           });
         }) : h(TreeNode, {
@@ -349,13 +356,54 @@
           onSelect: onSelect,
           selectedPath: selectedPath,
           searchQuery: searchQuery,
+          sourceData: data,
           depth: 0,
         })
       )
+      ]
     );
   }
 
   // ── Mapping Editor (Table-based) ───────────────────────────────────
+
+  function NestedFieldsEditor(props) {
+    var nestedFields = props.fields || [];
+    var onChange = props.onChange;
+    var depth = props.depth || 0;
+
+    function updateChild(ci, updated) {
+      var next = nestedFields.slice();
+      next[ci] = updated;
+      onChange(next);
+    }
+
+    function addChild() {
+      var next = nestedFields.slice();
+      next.push(MF.defaultVisualField({ target: "field_" + (next.length + 1), kind: "simple" }));
+      onChange(next);
+    }
+
+    return h("div", { className: "nested-fields-editor", style: { marginLeft: depth ? "12px" : "0" } },
+      nestedFields.map(function (nf, ci) {
+        return h(MappingFieldRow, {
+          key: ci,
+          field: nf,
+          index: ci,
+          onChange: function (_, u) { updateChild(ci, u); },
+          onRemove: function (idx) {
+            var next = nestedFields.slice();
+            next.splice(idx, 1);
+            onChange(next);
+          },
+          onMove: function () { },
+          totalFields: nestedFields.length,
+          compact: true,
+          hideKindSelect: true,
+        });
+      }),
+      h("button", { type: "button", className: "btn btn-sm btn-secondary mt-1", onClick: addChild }, "+ Nested field")
+    );
+  }
 
   function MappingFieldRow(props) {
     var field = props.field;
@@ -363,80 +411,107 @@
     var onChange = props.onChange;
     var onRemove = props.onRemove;
     var onMove = props.onMove;
-    var inspectionFields = props.inspectionFields || [];
+    var compact = props.compact;
+    var hideKindSelect = props.hideKindSelect;
+    var rowError = props.rowError;
 
     function update(key, value) {
       var updated = Object.assign({}, field, {});
       updated[key] = value;
+      if (key === "kind") {
+        if (value === "forEach" || value === "nested") {
+          if (!updated.nestedFields || !updated.nestedFields.length) {
+            updated.nestedFields = [MF.defaultVisualField({ target: "item_field", kind: "simple" })];
+          }
+        }
+        if (value === "compute" && MF) {
+          var tpl = MF.COMPUTE_TEMPLATES[0];
+          updated.computeTemplate = tpl.id;
+          updated.computeCode = tpl.code;
+        }
+      }
+      if (key === "computeTemplate" && MF) {
+        var t = MF.COMPUTE_TEMPLATES.find(function (x) { return x.id === value; });
+        if (t) {
+          updated.computeCode = t.code;
+        }
+      }
       onChange(index, updated);
     }
 
-    return h("div", { className: "mapping-field-row" },
-      h("div", null,
-        h("label", { className: "mapping-field-label" }, "Target Field"),
-        h("input", {
-          className: "mapping-field-input",
-          type: "text",
-          value: field.target || "",
-          placeholder: "output_field_name",
-          onInput: function (e) { update("target", e.target.value); },
-        })
-      ),
-      h("div", null,
-        h("label", { className: "mapping-field-label" }, "Source Path"),
-        h("input", {
-          className: "mapping-field-input",
-          type: "text",
-          value: field.source || "",
-          placeholder: "source.field.path",
-          onInput: function (e) { update("source", e.target.value); },
-          list: "field-suggestions",
-        })
-      ),
-      h("div", { className: "mapping-field-actions" },
-        h("button", {
-          type: "button",
-          className: "btn btn-sm btn-secondary",
-          onClick: function () { onMove(index, -1); },
-          disabled: index === 0,
-          "data-tooltip": "Move up",
-        }, "\u25B2"),
-        h("button", {
-          type: "button",
-          className: "btn btn-sm btn-secondary",
-          onClick: function () { onMove(index, 1); },
-          disabled: index === (props.totalFields - 1),
-          "data-tooltip": "Move down",
-        }, "\u25BC"),
-        h("button", {
-          type: "button",
-          className: "btn btn-sm btn-danger",
-          onClick: function () { onRemove(index); },
-          "data-tooltip": "Remove",
-        }, "\u2715")
-      ),
-      h("div", { className: "mapping-field-options" },
+    var kind = field.kind || "simple";
+    var templates = MF ? MF.COMPUTE_TEMPLATES : [];
+
+    return h("div", { className: "mapping-field-row" + (rowError ? " has-error" : "") },
+      rowError ? h("div", { className: "mapping-row-error" }, rowError) : null,
+      h("div", { className: "mapping-field-row-main" },
         h("div", null,
+          h("label", { className: "mapping-field-label" }, "Target Field"),
+          h("input", {
+            className: "mapping-field-input",
+            type: "text",
+            value: field.target || "",
+            placeholder: "output_field_name",
+            onInput: function (e) { update("target", e.target.value); },
+          })
+        ),
+        kind === "simple" || kind === "compute" ? h("div", null,
+          h("label", { className: "mapping-field-label" },
+            kind === "compute" ? "Source Path(s)" : "Source Path"
+          ),
+          h("input", {
+            className: "mapping-field-input",
+            type: "text",
+            value: kind === "compute" ? (field.computeSources || field.source || "") : (field.source || ""),
+            placeholder: kind === "compute" ? "path.a, path.b" : "source.field.path",
+            onInput: function (e) {
+              if (kind === "compute") update("computeSources", e.target.value);
+              else update("source", e.target.value);
+            },
+            list: "field-suggestions",
+          })
+        ) : h("div", null,
+          h("label", { className: "mapping-field-label" }, kind === "forEach" ? "Array Path (forEach)" : "Object root"),
+          h("input", {
+            className: "mapping-field-input",
+            type: "text",
+            value: field.forEachPath || field.source || "",
+            placeholder: "items",
+            onInput: function (e) { update("forEachPath", e.target.value); },
+            list: "field-suggestions",
+          })
+        ),
+        !compact ? h("div", { className: "mapping-field-actions" },
+          h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: function () { onMove(index, -1); }, disabled: index === 0 }, "\u25B2"),
+          h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: function () { onMove(index, 1); }, disabled: index === (props.totalFields - 1) }, "\u25BC"),
+          h("button", { type: "button", className: "btn btn-sm btn-danger", onClick: function () { onRemove(index); } }, "\u2715")
+        ) : h("div", { className: "mapping-field-actions" },
+          h("button", { type: "button", className: "btn btn-sm btn-danger", onClick: function () { onRemove(index); } }, "\u2715")
+        )
+      ),
+      !hideKindSelect && !compact ? h("div", { className: "mapping-field-options" },
+        h("div", null,
+          h("label", { className: "mapping-field-label" }, "Mapping Type"),
+          h("select", { value: kind, onChange: function (e) { update("kind", e.target.value); } },
+            h("option", { value: "simple" }, "Field map"),
+            h("option", { value: "forEach" }, "Array (forEach)"),
+            h("option", { value: "nested" }, "Nested object"),
+            h("option", { value: "compute" }, "Compute")
+          )
+        ),
+        kind === "simple" ? h("div", null,
           h("label", { className: "mapping-field-label" }, "Type"),
-          h("select", {
-            value: field.type || "auto",
-            onChange: function (e) { update("type", e.target.value); },
-          },
-            h("option", { value: "auto" }, "Auto-detect"),
+          h("select", { value: field.type || "auto", onChange: function (e) { update("type", e.target.value); } },
+            h("option", { value: "auto" }, "Auto"),
             h("option", { value: "string" }, "String"),
             h("option", { value: "number" }, "Number"),
             h("option", { value: "boolean" }, "Boolean"),
-            h("option", { value: "date" }, "Date"),
-            h("option", { value: "object" }, "Object"),
-            h("option", { value: "array" }, "Array")
+            h("option", { value: "date" }, "Date")
           )
-        ),
-        h("div", null,
+        ) : null,
+        kind === "simple" || kind === "compute" ? h("div", null,
           h("label", { className: "mapping-field-label" }, "Format"),
-          h("select", {
-            value: field.format || "",
-            onChange: function (e) { update("format", e.target.value); },
-          },
+          h("select", { value: field.format || "", onChange: function (e) { update("format", e.target.value); } },
             h("option", { value: "" }, "None"),
             h("option", { value: "uppercase" }, "Uppercase"),
             h("option", { value: "lowercase" }, "Lowercase"),
@@ -445,18 +520,61 @@
             h("option", { value: "number" }, "Number"),
             h("option", { value: "date" }, "Date")
           )
-        ),
-        h("div", null,
+        ) : null,
+        kind === "simple" ? h("div", null,
           h("label", { className: "mapping-field-label" }, "Default"),
+          h("input", { className: "mapping-field-input", type: "text", value: field.default || "", onInput: function (e) { update("default", e.target.value); } })
+        ) : null,
+        kind === "simple" ? h("div", null,
+          h("label", { className: "mapping-field-label" }, "Coalesce"),
           h("input", {
             className: "mapping-field-input",
             type: "text",
-            value: field.default || "",
-            placeholder: "fallback value",
-            onInput: function (e) { update("default", e.target.value); },
+            value: field.coalesce || "",
+            placeholder: "alt.path, other.path",
+            onInput: function (e) { update("coalesce", e.target.value); },
+          })
+        ) : null,
+        kind === "simple" ? h("div", null,
+          h("label", { className: "mapping-field-label" }, "Value map"),
+          h("input", {
+            className: "mapping-field-input",
+            type: "text",
+            value: field.mapPairs || "",
+            placeholder: "old:new, yes:1",
+            onInput: function (e) { update("mapPairs", e.target.value); },
+          })
+        ) : null
+      ) : null,
+      kind === "compute" && !compact ? h("div", { className: "mapping-field-options" },
+        h("div", null,
+          h("label", { className: "mapping-field-label" }, "Template"),
+          h("select", {
+            value: field.computeTemplate || "concat",
+            onChange: function (e) { update("computeTemplate", e.target.value); },
+          },
+            templates.map(function (t) {
+              return h("option", { key: t.id, value: t.id }, t.label);
+            })
+          )
+        ),
+        h("div", { className: "mapping-compute-code-wrap" },
+          h("label", { className: "mapping-field-label" }, "Expression (use a, b, c…)"),
+          h("textarea", {
+            className: "mapping-compute-code",
+            value: field.computeCode || "",
+            rows: 3,
+            onInput: function (e) { update("computeCode", e.target.value); },
           })
         )
-      )
+      ) : null,
+      (kind === "forEach" || kind === "nested") && !compact ? h("div", { className: "mapping-nested-block" },
+        h("div", { className: "mapping-field-label mb-1" }, "Nested field mappings"),
+        h(NestedFieldsEditor, {
+          fields: field.nestedFields || [],
+          onChange: function (nf) { update("nestedFields", nf); },
+        })
+      ) : null
     );
   }
 
@@ -464,16 +582,17 @@
     var fields = props.fields;
     var onChange = props.onChange;
     var inspection = props.inspection;
+    var passthrough = props.passthrough;
+    var onPassthroughChange = props.onPassthroughChange;
+    var sourceData = props.sourceData;
+    var validationErrors = props.validationErrors || [];
 
     function addField() {
       var newFields = fields.slice();
-      newFields.push({
+      newFields.push(MF.defaultVisualField({
         target: "new_field_" + (newFields.length + 1),
-        source: "",
-        type: "auto",
-        format: "",
-        default: "",
-      });
+        kind: "simple",
+      }));
       onChange(newFields);
     }
 
@@ -499,15 +618,30 @@
       onChange(newFields);
     }
 
+    function errorForIndex(i) {
+      var msgs = validationErrors.filter(function (e) { return e.index === i; }).map(function (e) { return e.message; });
+      return msgs.length ? msgs.join("; ") : "";
+    }
+
     return h("div", { className: "mapping-editor" },
-      h("div", { className: "flex justify-between items-center mb-2" },
-        h("span", { className: "font-bold text-sm" }, "Field Mappings"),
-        h("button", { className: "btn btn-sm btn-primary", onClick: addField }, "+ Add Field")
+      h("div", { className: "mapping-toolbar" },
+        h("label", { className: "mapping-passthrough" },
+          h("input", {
+            type: "checkbox",
+            checked: !!passthrough,
+            onChange: function (e) { onPassthroughChange(e.target.checked); },
+          }),
+          " Passthrough (include unmapped source fields)"
+        ),
+        h("button", { type: "button", className: "btn btn-sm btn-primary", onClick: addField }, "+ Add Field")
       ),
+      validationErrors.length > 0 ? h("div", { className: "mapping-validation-summary" },
+        validationErrors.length + " mapping issue(s) — check highlighted rows"
+      ) : null,
       fields.length === 0 ? h("div", { className: "empty-state" },
         h("div", { className: "empty-state-icon" }, "\uD83D\uDC64"),
         h("div", { className: "empty-state-text" }, "No fields mapped yet"),
-        h("div", { className: "empty-state-text" }, "Click \"+ Add Field\" to start mapping")
+        h("div", { className: "empty-state-text" }, "Click \"+ Add Field\" or run the Wizard")
       ) : fields.map(function (field, i) {
         return h(MappingFieldRow, {
           key: i,
@@ -517,10 +651,9 @@
           onRemove: removeField,
           onMove: moveField,
           totalFields: fields.length,
-          inspectionFields: inspection ? Object.keys(inspection.fields || {}) : [],
+          rowError: errorForIndex(i),
         });
       }),
-      // Hidden datalist for field suggestions
       h("datalist", { id: "field-suggestions" },
         (inspection ? Object.keys(inspection.fields || {}) : []).map(function (f) {
           return h("option", { key: f, value: f });
@@ -597,7 +730,13 @@
   function PreviewPanel(props) {
     var output = props.output;
     var errors = props.errors;
+    var expectedOutput = props.expectedOutput;
+    var previewLimit = props.previewLimit;
+    var onPreviewLimitChange = props.onPreviewLimitChange;
+    var onClearPreview = props.onClearPreview;
+    var onLoadExpected = props.onLoadExpected;
     var _useState = useState(0), recordIndex = _useState[0], setRecordIndex = _useState[1];
+    var _useState2 = useState(false), showDiff = _useState2[0], setShowDiff = _useState2[1];
 
     var totalRecords = Array.isArray(output) ? output.length : (output ? 1 : 0);
 
@@ -613,34 +752,68 @@
       return output;
     }
 
-    return h("div", { className: "panel panel-preview" },
+    function getExpectedRecord() {
+      if (!expectedOutput) return null;
+      if (Array.isArray(expectedOutput)) {
+        return expectedOutput[recordIndex] || expectedOutput[0];
+      }
+      return expectedOutput;
+    }
+
+    var actual = getDisplayRecord();
+    var expected = getExpectedRecord();
+    var diffLines = showDiff && expected != null && actual != null && MF
+      ? MF.diffRecords(expected, actual)
+      : null;
+
+    return h("div", { className: "panel panel-preview" + (props.collapsed ? " panel-collapsed" : "") },
       h("div", { className: "panel-header" },
         h("span", { className: "panel-title" }, "Preview"),
-        errors && errors.length > 0
-          ? h("span", { className: "text-sm", style: { color: "var(--danger)" } }, errors.length + " errors")
-          : h("span", { className: "text-sm text-muted" }, totalRecords + " record" + (totalRecords !== 1 ? "s" : ""))
+        h("div", { className: "flex gap-1 items-center" },
+          props.onToggleCollapse ? h("button", {
+            type: "button",
+            className: "btn btn-sm btn-secondary",
+            onClick: props.onToggleCollapse,
+            title: "Collapse panel",
+          }, props.collapsed ? "\u25B6" : "\u25C0") : null,
+          errors && errors.length > 0
+            ? h("span", { className: "text-sm", style: { color: "var(--danger)" } }, errors.length + " err")
+            : h("span", { className: "text-sm text-muted" }, totalRecords + " shown")
+        )
+      ),
+      h("div", { className: "preview-controls" },
+        h("label", { className: "text-sm" }, "Records:"),
+        h("input", {
+          type: "number",
+          className: "preview-limit-input",
+          min: 1,
+          max: 1000,
+          value: previewLimit,
+          onInput: function (e) { onPreviewLimitChange(Math.max(1, parseInt(e.target.value, 10) || 5)); },
+        }),
+        h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: onLoadExpected }, "Load expected"),
+        expectedOutput ? h("button", {
+          type: "button",
+          className: "btn btn-sm " + (showDiff ? "btn-primary" : "btn-secondary"),
+          onClick: function () { setShowDiff(!showDiff); },
+        }, "Diff") : null,
+        h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: onClearPreview }, "Clear")
       ),
       Array.isArray(output) && output.length > 1 ? h("div", { className: "preview-record-nav" },
-        h("button", {
-          type: "button",
-          className: "btn btn-sm btn-secondary",
-          onClick: function () { setRecordIndex(function (i) { return Math.max(0, i - 1); }); },
-          disabled: recordIndex === 0,
-        }, "\u25C0"),
+        h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: function () { setRecordIndex(function (i) { return Math.max(0, i - 1); }); }, disabled: recordIndex === 0 }, "\u25C0"),
         h("span", { className: "preview-record-count" }, "Record " + (recordIndex + 1) + " / " + output.length),
-        h("button", {
-          type: "button",
-          className: "btn btn-sm btn-secondary",
-          onClick: function () { setRecordIndex(function (i) { return Math.min(output.length - 1, i + 1); }); },
-          disabled: recordIndex >= output.length - 1,
-        }, "\u25B6")
+        h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: function () { setRecordIndex(function (i) { return Math.min(output.length - 1, i + 1); }); }, disabled: recordIndex >= output.length - 1 }, "\u25B6")
       ) : null,
       h("div", { className: "panel-body" },
-        output ? h("pre", { className: "preview-output" }, JSON.stringify(getDisplayRecord(), null, 2))
+        showDiff && diffLines ? h("div", { className: "preview-diff" },
+          diffLines.map(function (line, i) {
+            return h("div", { key: i, className: "diff-line diff-" + line.type }, line.text);
+          })
+        ) : output ? h("pre", { className: "preview-output" }, JSON.stringify(actual, null, 2))
           : h("div", { className: "empty-state" },
               h("div", { className: "empty-state-icon" }, "\uD83D\uDCC1"),
               h("div", { className: "empty-state-text" }, "No output yet"),
-              h("div", { className: "empty-state-text" }, "Load data and create a mapping to see results")
+              h("div", { className: "empty-state-text" }, "Load data and create a mapping")
             ),
         errors && errors.length > 0 ? h("div", { className: "preview-errors" },
           h("div", { className: "font-bold text-sm mb-1" }, "Errors"),
@@ -695,7 +868,9 @@
     var _useState3 = useState(false), passthrough = _useState3[0], setPassthrough = _useState3[1];
 
     var fieldNames = inspection ? Object.keys(inspection.fields || {}) : [];
-    var totalSteps = fieldNames.length + 2; // intro + fields + review
+    var reviewStep = fieldNames.length + 1;
+    var previewStep = fieldNames.length + 2;
+    var totalSteps = fieldNames.length + 3; // intro + fields + review + preview
 
     useEffect(function () {
       if (open) {
@@ -706,6 +881,25 @@
     }, [open]);
 
     if (!open) return null;
+
+    function acceptAllRemaining(fromIndex) {
+      var newAnswers = answers.slice();
+      for (var i = fromIndex; i < fieldNames.length; i++) {
+        var fn = fieldNames[i];
+        if (newAnswers.find(function (a) { return a.field === fn; })) continue;
+        var inferred = JsonTransformer.inferFieldDefaults(inspection, fn);
+        newAnswers.push({
+          field: fn,
+          action: "accept",
+          source: fn,
+          target: inferred.targetField,
+          type: inferred.type,
+          format: inferred.format,
+        });
+      }
+      setAnswers(newAnswers);
+      showToast("Defaults applied to remaining fields", "success", 2500);
+    }
 
     function handleFieldAnswer(fieldName, answer) {
       var newAnswers = answers.slice();
@@ -719,15 +913,30 @@
     }
 
     function handleNext() {
-      if (step < fieldNames.length) {
-        setStep(step + 1);
-      } else if (step === fieldNames.length) {
-        // Review step
+      if (step >= 1 && step <= fieldNames.length) {
+        var fn = fieldNames[step - 1];
+        var ans = answers.find(function (a) { return a.field === fn; });
+        if (!ans || ans.action !== "skip") {
+          var inf = JsonTransformer.inferFieldDefaults(inspection, fn);
+          if (!ans) {
+            handleFieldAnswer(fn, {
+              action: "accept",
+              source: fn,
+              target: inf.targetField,
+              type: inf.type,
+              format: inf.format,
+            });
+          } else if (!ans.target || !String(ans.target).trim()) {
+            showToast("Enter a destination field name or skip this field", "warning");
+            return;
+          }
+        }
+      }
+      if (step < previewStep) {
         setStep(step + 1);
       } else {
-        // Complete
         var mapping = buildMappingFromAnswers(answers, passthrough);
-        onComplete(mapping);
+        onComplete(mapping, passthrough);
         onClose();
       }
     }
@@ -775,41 +984,99 @@
         var fieldInfo = inspection.fields[fieldName];
         var currentAnswer = answers.find(function (a) { return a.field === fieldName; });
         var inferred = JsonTransformer.inferFieldDefaults(inspection, fieldName);
+        var isSkipped = currentAnswer && currentAnswer.action === "skip";
+        var destinationName = isSkipped
+          ? ""
+          : ((currentAnswer && currentAnswer.target) || inferred.targetField);
+
+        function saveDestination(target) {
+          handleFieldAnswer(fieldName, {
+            action: "accept",
+            source: fieldName,
+            target: target || inferred.targetField,
+            type: inferred.type,
+            format: inferred.format,
+          });
+        }
 
         return h("div", null,
           h("h3", { className: "mb-2" }, "Field " + step + " of " + fieldNames.length),
-          h("div", { className: "wizard-source-field" }, fieldName),
-          h("div", { className: "text-sm text-muted mb-2" },
-            "Type: " + (fieldInfo ? fieldInfo.type : "unknown") +
-            (fieldInfo && fieldInfo.distinctValues ? " | Distinct: " + fieldInfo.distinctValues.length : "")
+          h("div", { className: "wizard-field-map" },
+            h("div", { className: "wizard-field-map-row" },
+              h("label", { className: "wizard-field-map-label" }, "Source"),
+              h("div", { className: "wizard-source-field" }, fieldName)
+            ),
+            h("div", { className: "wizard-field-map-row" },
+              h("label", { className: "wizard-field-map-label", for: "wizard-target-" + step }, "Destination"),
+              h("input", {
+                id: "wizard-target-" + step,
+                className: "mapping-field-input wizard-destination-input",
+                type: "text",
+                value: destinationName,
+                disabled: isSkipped,
+                placeholder: "output_field_name",
+                onInput: function (e) { saveDestination(e.target.value.trim()); },
+              })
+            ),
+            h("div", { className: "text-sm text-muted" },
+              "Type: " + (fieldInfo ? fieldInfo.type : "unknown") +
+              (fieldInfo && fieldInfo.distinctValues ? " | Suggested: " + inferred.targetField : "")
+            )
           ),
           h("div", { className: "wizard-options" },
             h("button", {
               type: "button",
-              className: "wizard-option" + (currentAnswer && currentAnswer.action === "accept" ? " selected" : ""),
-              onClick: function () { handleFieldAnswer(fieldName, { action: "accept", source: fieldName, target: inferred.targetField, type: inferred.type, format: inferred.format }); },
+              className: "wizard-option" + (!isSkipped && currentAnswer ? " selected" : ""),
+              onClick: function () { saveDestination(inferred.targetField); },
             },
               h("span", null, "\u2705"),
-              h("span", null, "Accept default: " + fieldName + " \u2192 " + inferred.targetField + " (" + inferred.type + ")")
+              h("span", null, "Use suggested name: " + inferred.targetField)
             ),
             h("button", {
               type: "button",
-              className: "wizard-option" + (currentAnswer && currentAnswer.action === "skip" ? " selected" : ""),
+              className: "wizard-option" + (isSkipped ? " selected" : ""),
               onClick: function () { handleFieldAnswer(fieldName, { action: "skip" }); },
             },
               h("span", null, "\u23E9"),
               h("span", null, "Skip this field")
             )
-          )
+          ),
+          !isSkipped ? h("p", { className: "text-sm text-muted mt-2" },
+            "Edit the destination name above, or use the suggested name."
+          ) : null,
+          step - 1 < fieldNames.length - 1 ? h("button", {
+            type: "button",
+            className: "btn btn-sm btn-secondary mt-2",
+            onClick: function () { acceptAllRemaining(step - 1); },
+          }, "Apply defaults to all remaining fields") : null
         );
-      } else if (step === fieldNames.length + 1) {
-        // Review
-        var mapping = buildMappingFromAnswers(answers, passthrough);
+      } else if (step === reviewStep) {
+        var mappingReview = buildMappingFromAnswers(answers, passthrough);
         return h("div", null,
           h("h3", { className: "mb-2" }, "Review Your Mapping"),
-          h("pre", { className: "code-editor", style: { maxHeight: "300px", overflow: "auto" } },
-            JSON.stringify(mapping, null, 2)
+          h("pre", { className: "code-editor", style: { maxHeight: "280px", overflow: "auto" } },
+            JSON.stringify(mappingReview, null, 2)
           )
+        );
+      } else if (step === previewStep) {
+        var mappingPreview = buildMappingFromAnswers(answers, passthrough);
+        var previewOut = null;
+        var previewErr = null;
+        if (data && mappingPreview.fields && Object.keys(mappingPreview.fields).length) {
+          try {
+            var slice = Array.isArray(data) ? data.slice(0, 5) : [data];
+            previewOut = JsonTransformer.transform(slice, JsonTransformer.prepareMapping(mappingPreview));
+          } catch (ex) {
+            previewErr = ex.message;
+          }
+        }
+        return h("div", null,
+          h("h3", { className: "mb-2" }, "Preview Output"),
+          h("p", { className: "text-sm text-muted mb-2" }, "Sample transform on first " + Math.min(5, (data && data.length) || 0) + " record(s)"),
+          previewErr ? h("div", { className: "validation-error" }, previewErr)
+            : h("pre", { className: "code-editor", style: { maxHeight: "280px", overflow: "auto" } },
+                JSON.stringify(previewOut, null, 2)
+              )
         );
       }
     }
@@ -837,7 +1104,7 @@
             step === 0 ? "Cancel" : "Back"
           ),
           h("button", { className: "btn btn-primary", onClick: handleNext },
-            step === fieldNames.length + 1 ? "Finish" : "Next"
+            step === previewStep ? "Finish" : "Next"
           )
         )
       )
@@ -882,8 +1149,50 @@
     var _useState12 = useState(function () {
       return localStorage.getItem("jt-autosave-pref");
     }), autosavePref = _useState12[0], setAutosavePref = _useState12[1];
+    var _useState13 = useState(false), passthrough = _useState13[0], setPassthrough = _useState13[1];
+    var _useState14 = useState(5), previewLimit = _useState14[0], setPreviewLimit = _useState14[1];
+    var _useState15 = useState(null), expectedOutput = _useState15[0], setExpectedOutput = _useState15[1];
+    var _useState16 = useState([]), mappingValidationErrors = _useState16[0], setMappingValidationErrors = _useState16[1];
+    var _useState17 = useState({ source: false, mapping: false, preview: false }), collapsedPanels = _useState17[0], setCollapsedPanels = _useState17[1];
+    var _useState18 = useState([]), undoStack = _useState18[0], setUndoStack = _useState18[1];
+    var _useState19 = useState([]), redoStack = _useState19[0], setRedoStack = _useState19[1];
     var computeWarningAck = useRef(false);
     var fileInputRef = useRef(null);
+    var expectedInputRef = useRef(null);
+
+    function setMappingFieldsWithHistory(next) {
+      setUndoStack(function (s) {
+        return s.concat([JSON.stringify(mappingFields)]).slice(-50);
+      });
+      setRedoStack([]);
+      setMappingFields(next);
+    }
+
+    function undoMapping() {
+      if (!undoStack.length) return;
+      var prev = undoStack[undoStack.length - 1];
+      setUndoStack(function (s) { return s.slice(0, -1); });
+      setRedoStack(function (s) { return s.concat([JSON.stringify(mappingFields)]); });
+      setMappingFields(JSON.parse(prev));
+      showToast("Undo", "info", 1500);
+    }
+
+    function redoMapping() {
+      if (!redoStack.length) return;
+      var next = redoStack[redoStack.length - 1];
+      setRedoStack(function (s) { return s.slice(0, -1); });
+      setUndoStack(function (s) { return s.concat([JSON.stringify(mappingFields)]); });
+      setMappingFields(JSON.parse(next));
+      showToast("Redo", "info", 1500);
+    }
+
+    function togglePanel(name) {
+      setCollapsedPanels(function (c) {
+        var n = Object.assign({}, c);
+        n[name] = !n[name];
+        return n;
+      });
+    }
 
     // Apply theme
     useEffect(function () {
@@ -898,6 +1207,7 @@
         if (saved) {
           var parsed = JSON.parse(saved);
           if (parsed.fields) setMappingFields(parsed.fields);
+          if (parsed.passthrough) setPassthrough(true);
           if (parsed.code) {
             setCodeEditorValue(parsed.code);
             if (parsed.mode) setEditorMode(parsed.mode);
@@ -914,10 +1224,19 @@
           fields: mappingFields,
           code: codeEditorValue,
           mode: editorMode,
+          passthrough: passthrough,
         };
         localStorage.setItem("jt-mapping", JSON.stringify(state));
       }
-    }, [mappingFields, codeEditorValue, editorMode, autosavePref]);
+    }, [mappingFields, codeEditorValue, editorMode, autosavePref, passthrough]);
+
+    useEffect(function () {
+      if (editorMode === "visual" && sourceData && MF) {
+        setMappingValidationErrors(MF.validateVisualFields(mappingFields, sourceData));
+      } else {
+        setMappingValidationErrors([]);
+      }
+    }, [mappingFields, sourceData, editorMode]);
 
     // Run transform when data or mapping changes (debounced)
     useEffect(function () {
@@ -931,7 +1250,7 @@
         try {
           var mapping;
           if (editorMode === "visual") {
-            mapping = buildMappingFromVisual(mappingFields);
+            mapping = buildMappingFromVisual(mappingFields, passthrough);
           } else if (editorMode === "json") {
             if (!codeEditorValue.trim()) {
               setPreviewOutput(null);
@@ -976,7 +1295,10 @@
             setPreviewErrors([]);
           }
 
-          var result = JsonTransformer.transform(sourceData, ready);
+          var previewData = Array.isArray(sourceData)
+            ? sourceData.slice(0, previewLimit)
+            : sourceData;
+          var result = JsonTransformer.transform(previewData, ready);
           setPreviewOutput(result);
         } catch (e) {
           setPreviewOutput(null);
@@ -985,20 +1307,7 @@
       }, 200);
 
       return function () { clearTimeout(timer); };
-    }, [sourceData, mappingFields, codeEditorValue, editorMode]);
-
-    function buildMappingFromVisual(fields) {
-      var mappingFields = {};
-      fields.forEach(function (f) {
-        if (!f.target || !f.source) return;
-        var fieldDef = { from: f.source };
-        if (f.type && f.type !== "auto") fieldDef.type = f.type;
-        if (f.format) fieldDef.format = f.format;
-        if (f.default !== undefined && f.default !== "") fieldDef.default = f.default;
-        mappingFields[f.target] = fieldDef;
-      });
-      return { fields: mappingFields };
-    }
+    }, [sourceData, mappingFields, codeEditorValue, editorMode, passthrough, previewLimit]);
 
     // File loading
     function handleFileLoad(e) {
@@ -1046,7 +1355,7 @@
       var mapping;
       try {
         if (editorMode === "visual") {
-          mapping = buildMappingFromVisual(mappingFields);
+          mapping = buildMappingFromVisual(mappingFields, passthrough);
         } else if (editorMode === "json") {
           mapping = JSON.parse(codeEditorValue);
         } else {
@@ -1111,6 +1420,7 @@
           if (mapping && mapping.fields) {
             setMappingFields(visualFieldsFromMapping(mapping));
           }
+          if (mapping && mapping.passthrough) setPassthrough(true);
           computeWarningAck.current = false;
           showToast("Mapping imported", "success");
         } catch (err) {
@@ -1123,10 +1433,10 @@
     // Sync code editor with visual fields when switching modes
     function switchMode(mode) {
       if (mode === "json" && editorMode === "visual" && mappingFields.length > 0) {
-        var mapping = buildMappingFromVisual(mappingFields);
+        var mapping = buildMappingFromVisual(mappingFields, passthrough);
         setCodeEditorValue(JSON.stringify(mapping, null, 2));
       } else if (mode === "js" && editorMode === "visual" && mappingFields.length > 0) {
-        var mappingJs = buildMappingFromVisual(mappingFields);
+        var mappingJs = buildMappingFromVisual(mappingFields, passthrough);
         setCodeEditorValue(JSON.stringify(mappingJs, null, 2));
       } else if (mode === "visual" && editorMode !== "visual") {
         try {
@@ -1165,11 +1475,48 @@
     }
 
     // Wizard complete
-    function handleWizardComplete(mapping) {
+    function handleWizardComplete(mapping, wizardPassthrough) {
       var fields = visualFieldsFromMapping(mapping);
-      setMappingFields(fields);
+      setMappingFieldsWithHistory(fields);
+      setPassthrough(!!wizardPassthrough);
       setEditorMode("visual");
       showToast("Wizard complete! " + fields.length + " fields mapped.", "success");
+    }
+
+    function handleLoadExpected(e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (ev) {
+        try {
+          var data = JSON.parse(ev.target.result);
+          if (!Array.isArray(data)) data = [data];
+          setExpectedOutput(data);
+          showToast("Loaded expected output (" + data.length + " records)", "success");
+        } catch (err) {
+          showToast("Invalid expected output JSON", "error");
+        }
+        e.target.value = "";
+      };
+      reader.readAsText(file);
+    }
+
+    function triggerExpectedLoad() {
+      if (!expectedInputRef.current) {
+        var input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json,application/json";
+        input.onchange = handleLoadExpected;
+        input.click();
+        return;
+      }
+      expectedInputRef.current.click();
+    }
+
+    function clearPreview() {
+      setPreviewOutput(null);
+      setPreviewErrors([]);
+      showToast("Preview cleared", "info", 1500);
     }
 
     // Clear data
@@ -1186,10 +1533,10 @@
     // Sync code editor value when in visual mode (keep it updated)
     useEffect(function () {
       if (editorMode === "visual" && mappingFields.length > 0) {
-        var mapping = buildMappingFromVisual(mappingFields);
+        var mapping = buildMappingFromVisual(mappingFields, passthrough);
         setCodeEditorValue(JSON.stringify(mapping, null, 2));
       }
-    }, [mappingFields]);
+    }, [mappingFields, passthrough]);
 
     return h("div", { className: "app-shell" },
       autosavePref === null ? h("div", { className: "autosave-banner" },
@@ -1267,37 +1614,54 @@
           }, theme === "light" ? "\u2600" : "\uD83C\uDF19")
         )
       ),
+      h("input", {
+        ref: expectedInputRef,
+        type: "file",
+        accept: ".json,application/json",
+        style: { display: "none" },
+        onChange: handleLoadExpected,
+      }),
       // Main content
       h("main", { className: "app-main" },
-        // Source tree panel
         h(SourceTreePanel, {
           data: sourceData,
           onSelect: handleTreeSelect,
           selectedPath: selectedPath,
+          collapsed: collapsedPanels.source,
+          onToggleCollapse: function () { togglePanel("source"); },
         }),
-        // Mapping editor panel
-        h("div", { className: "panel panel-mapping" },
+        h("div", { className: "panel panel-mapping" + (collapsedPanels.mapping ? " panel-collapsed" : "") },
           h("div", { className: "panel-header" },
-            h("span", { className: "panel-title" }, "Mapping Editor"),
-            h("div", { className: "flex gap-1" },
-              ["visual", "json", "js"].map(function (mode) {
-                return h("button", {
-                  key: mode,
-                  className: "btn btn-sm " + (editorMode === mode ? "btn-primary" : "btn-secondary"),
-                  onClick: function () { switchMode(mode); },
-                }, mode === "visual" ? "Visual" : mode.toUpperCase());
-              })
+            h("span", { className: "panel-title" }, collapsedPanels.mapping ? "Map" : "Mapping Editor"),
+            h("div", { className: "flex gap-1 flex-wrap" },
+              collapsedPanels.mapping ? null : [
+                h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: undoMapping, disabled: !undoStack.length, title: "Undo" }, "Undo"),
+                h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: redoMapping, disabled: !redoStack.length, title: "Redo" }, "Redo"),
+                ["visual", "json", "js"].map(function (mode) {
+                  return h("button", {
+                    key: mode,
+                    type: "button",
+                    className: "btn btn-sm " + (editorMode === mode ? "btn-primary" : "btn-secondary"),
+                    onClick: function () { switchMode(mode); },
+                  }, mode === "visual" ? "Visual" : mode.toUpperCase());
+                }),
+              ],
+              h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: function () { togglePanel("mapping"); } }, collapsedPanels.mapping ? "\u25B6" : "\u25C0")
             )
           ),
-          h("div", { className: "panel-body panel-body-mapping" },
+          collapsedPanels.mapping ? null : h("div", { className: "panel-body panel-body-mapping" },
             isLoading ? h("div", { className: "loading-spinner" }, "Processing...") : null,
             h(DataInspector, { inspection: inspection }),
             h("div", { className: "mapping-editor-scroll" },
               editorMode === "visual"
                 ? h(VisualMappingEditor, {
                     fields: mappingFields,
-                    onChange: setMappingFields,
+                    onChange: setMappingFieldsWithHistory,
                     inspection: inspection,
+                    passthrough: passthrough,
+                    onPassthroughChange: setPassthrough,
+                    sourceData: sourceData,
+                    validationErrors: mappingValidationErrors,
                   })
                 : h(CodeEditor, {
                     mode: editorMode,
@@ -1307,10 +1671,16 @@
             )
           )
         ),
-        // Preview panel
         h(PreviewPanel, {
           output: previewOutput,
           errors: previewErrors,
+          expectedOutput: expectedOutput,
+          previewLimit: previewLimit,
+          onPreviewLimitChange: setPreviewLimit,
+          onClearPreview: clearPreview,
+          onLoadExpected: triggerExpectedLoad,
+          collapsed: collapsedPanels.preview,
+          onToggleCollapse: function () { togglePanel("preview"); },
         })
       ),
       // Wizard modal

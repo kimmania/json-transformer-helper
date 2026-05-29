@@ -232,22 +232,47 @@
    * No access to window, document, fetch, eval, or other globals.
    * Timeout: 500ms per invocation.
    */
-  function safeEval(code, args, sourceRow, dicts) {
+  const COMPUTE_MAX_MS = 500;
+  const COMPUTE_PARAM_NAMES = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+  function safeEval(code, argValues, sourceRow, dicts) {
     try {
-      // Create a restricted function body — code is injected via string concat
+      var values = Array.isArray(argValues) ? argValues : [];
+      var decls = "";
+      for (var i = 0; i < values.length; i++) {
+        decls += "var " + (COMPUTE_PARAM_NAMES[i] || ("_p" + i)) + " = __values[" + i + "];";
+      }
       var fnBody = '"use strict";'
-        + 'var __result;'
-        + 'try {'
-        + '__result = (function() { ' + code + ' })();'
-        + '} catch(e) {'
-        + 'throw new Error("Compute error: " + e.message);'
-        + '}'
-        + 'return __result;';
-      const fn = new Function("...args", fnBody);
-      return fn(...args, sourceRow, dicts || {});
+        + "var __values = arguments[0];"
+        + "var __start = arguments[1];"
+        + "var __maxMs = arguments[2];"
+        + "if (Date.now() - __start > __maxMs) throw new Error('Compute timeout (>" + COMPUTE_MAX_MS + "ms)');"
+        + decls
+        + "var __result;"
+        + "try {"
+        + "__result = (function() { " + code + " })();"
+        + "} catch(e) {"
+        + "throw new Error('Compute error: ' + e.message);"
+        + "}"
+        + "return __result;";
+      var fn = new Function("values", "start", "maxMs", fnBody);
+      return fn(values, Date.now(), COMPUTE_MAX_MS);
     } catch (e) {
       throw new Error("Compute function failed: " + e.message);
     }
+  }
+
+  function compileCompute(code) {
+    if (!code || typeof code !== "string") {
+      throw new Error("Compute code must be a non-empty string");
+    }
+    return function computeWrapper() {
+      var argc = arguments.length;
+      var sourceRow = arguments[argc - 2];
+      var dicts = arguments[argc - 1];
+      var values = Array.prototype.slice.call(arguments, 0, argc - 2);
+      return safeEval(code, values, sourceRow, dicts);
+    };
   }
 
   // ── Core transform ───────────────────────────────────────────────────
@@ -318,10 +343,13 @@
     }
 
     // 6. Custom compute function
-    if (typeof fieldDef.compute === "function") {
+    if (typeof fieldDef.compute === "function" || typeof fieldDef.compute === "string") {
+      const computeFn = typeof fieldDef.compute === "string"
+        ? compileCompute(fieldDef.compute)
+        : fieldDef.compute;
       const fromPaths = Array.isArray(fieldDef.from) ? fieldDef.from : [fieldDef.from];
       const values = fromPaths.map(f => resolvePath(sourceRow, f));
-      return fieldDef.compute(...values, sourceRow, dictionaries);
+      return computeFn(...values, sourceRow, dictionaries);
     }
 
     // 7. Field mapping (rename / map / format)
@@ -716,6 +744,7 @@
     toCamelCase,
     inferFieldDefaults,
     safeEval,
+    compileCompute,
     resolvePath,
   };
 

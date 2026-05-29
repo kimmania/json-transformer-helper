@@ -177,12 +177,109 @@
     });
   }
 
+  var ARRAY_LABEL_KEYS = [
+    "ProductSKU", "SKU", "sku", "order_id", "orderId", "id", "name", "Name",
+    "title", "Title", "FullName", "EmployeeName", "Email",
+  ];
+
+  function resolvePathInSourceData(data, path) {
+    if (path == null || path === "") return data;
+    if (data == null) return undefined;
+    var parts = String(path).split(".").filter(function (p) { return p !== ""; });
+    var cur = data;
+    for (var i = 0; i < parts.length; i++) {
+      if (cur == null) return undefined;
+      var p = parts[i];
+      if (Array.isArray(cur) && /^\d+$/.test(p)) {
+        cur = cur[parseInt(p, 10)];
+      } else if (typeof cur === "object") {
+        cur = cur[p];
+      } else {
+        return undefined;
+      }
+    }
+    return cur;
+  }
+
+  function arrayItemDisplayLabel(item, index) {
+    var base = "[" + index + "]";
+    if (item == null) return base + " null";
+    if (typeof item !== "object") return base + " " + String(item);
+    var i;
+    for (i = 0; i < ARRAY_LABEL_KEYS.length; i++) {
+      var k = ARRAY_LABEL_KEYS[i];
+      if (item[k] != null && item[k] !== "") {
+        return base + " " + String(item[k]);
+      }
+    }
+    var keys = Object.keys(item);
+    if (keys.length) {
+      var fv = item[keys[0]];
+      if (fv != null && typeof fv !== "object") {
+        return base + " " + truncate(String(fv), 28);
+      }
+    }
+    return base;
+  }
+
+  function collapsedCollectionPreview(value, type, expanded) {
+    if (expanded || !value) return null;
+    if (type === "object") {
+      var keys = Object.keys(value);
+      if (!keys.length) return "{empty}";
+      var names = keys.slice(0, 4).join(", ");
+      if (keys.length > 4) names += ", …";
+      return names;
+    }
+    if (type === "array") {
+      if (!value.length) return "empty";
+      return value.slice(0, 3).map(function (item, i) {
+        return arrayItemDisplayLabel(item, i);
+      }).join(", ") + (value.length > 3 ? ", …" : "");
+    }
+    return null;
+  }
+
+  function pathToBreadcrumbs(data, path) {
+    if (path == null || path === "") return [];
+    var parts = String(path).split(".").filter(function (p) { return p !== ""; });
+    var crumbs = [];
+    var acc = "";
+    var i;
+    for (i = 0; i < parts.length; i++) {
+      acc = acc ? acc + "." + parts[i] : parts[i];
+      var label = parts[i];
+      if (/^\d+$/.test(parts[i])) {
+        var idx = parseInt(parts[i], 10);
+        if (i === 0 && Array.isArray(data)) {
+          label = "Record " + (idx + 1);
+        } else {
+          var item = resolvePathInSourceData(data, acc);
+          label = arrayItemDisplayLabel(item, idx);
+        }
+      }
+      crumbs.push({ label: label, path: acc });
+    }
+    return crumbs;
+  }
+
+  function formatSourceDetailJson(value) {
+    if (value === undefined) return "// Path not found in loaded data";
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (e) {
+      return String(value);
+    }
+  }
+
   function treeNodeMatchesSearch(path, nodeKey, value, query) {
     if (!query) return true;
     var q = query.toLowerCase();
     if (nodeKey && String(nodeKey).toLowerCase().indexOf(q) >= 0) return true;
     if (path && String(path).toLowerCase().indexOf(q) >= 0) return true;
-    if (getType(value) === "string" && String(value).toLowerCase().indexOf(q) >= 0) return true;
+    var type = getType(value);
+    if (type === "string" && String(value).toLowerCase().indexOf(q) >= 0) return true;
+    if ((type === "number" || type === "boolean") && String(value).toLowerCase().indexOf(q) >= 0) return true;
     return false;
   }
 
@@ -290,6 +387,24 @@
     };
   }
 
+  function treeTypeBadgeClass(type) {
+    if (type === "string") return "tree-type-s";
+    if (type === "number") return "tree-type-n";
+    if (type === "boolean") return "tree-type-b";
+    if (type === "object") return "tree-type-o";
+    if (type === "array") return "tree-type-a";
+    return "tree-type-l";
+  }
+
+  function treeTypeBadgeLabel(type) {
+    if (type === "string") return "s";
+    if (type === "number") return "n";
+    if (type === "boolean") return "b";
+    if (type === "object") return "o";
+    if (type === "array") return "a";
+    return "∅";
+  }
+
   // ── Tree Node Component ────────────────────────────────────────────
 
   function TreeNode(props) {
@@ -301,6 +416,7 @@
     var searchQuery = props.searchQuery;
     var sourceData = props.sourceData;
     var depth = props.depth || 0;
+    var expandControl = props.expandControl;
 
     if (searchQuery && !treeHasMatchingDescendant(value, path, searchQuery)) {
       return null;
@@ -320,16 +436,32 @@
       if (searchQuery) setExpanded(true);
     }, [searchQuery]);
 
-    function handleClick() {
+    useEffect(function () {
+      if (expandControl && expandControl.version > 0) {
+        setExpanded(!!expandControl.all || !!searchQuery);
+      }
+    }, [expandControl ? expandControl.version : 0]);
+
+    function handleClick(e) {
+      if (e.target.closest && e.target.closest(".tree-toggle")) {
+        if (isExpandable) setExpanded(function (ex) { return !ex; });
+        return;
+      }
       if (isExpandable) {
-        setExpanded(function (e) { return !e; });
+        setExpanded(function (ex) { return !ex; });
       }
       if (onSelect) {
         onSelect(path, value, type);
       }
     }
 
+    function handleToggleClick(e) {
+      e.stopPropagation();
+      if (isExpandable) setExpanded(function (ex) { return !ex; });
+    }
+
     function renderValue() {
+      var collectionPreview = collapsedCollectionPreview(value, type, expanded);
       if (type === "null") return h("span", { className: "tree-value tree-value-primitive" }, "null");
       if (type === "boolean") return h("span", { className: "tree-value tree-value-primitive" }, String(value));
       if (type === "number") return h("span", { className: "tree-value tree-value-primitive" }, String(value));
@@ -337,10 +469,18 @@
         var display = truncate(value, 48);
         return h("span", { className: "tree-value tree-value-string", title: value }, "\"" + display + "\"");
       }
-      if (type === "array") return h("span", { className: "tree-value tree-value-meta" }, "[" + value.length + " items]");
+      if (type === "array") {
+        return h(Fragment, null,
+          h("span", { className: "tree-value tree-value-meta" }, value.length + " item" + (value.length === 1 ? "" : "s")),
+          collectionPreview ? h("span", { className: "tree-inline-preview", title: collectionPreview }, collectionPreview) : null
+        );
+      }
       if (type === "object") {
         var keys = Object.keys(value);
-        return h("span", { className: "tree-value tree-value-meta" }, "{" + keys.length + " fields}");
+        return h(Fragment, null,
+          h("span", { className: "tree-value tree-value-meta" }, keys.length + " field" + (keys.length === 1 ? "" : "s")),
+          collectionPreview ? h("span", { className: "tree-inline-preview", title: collectionPreview }, collectionPreview) : null
+        );
       }
       return null;
     }
@@ -349,34 +489,45 @@
     if (path && MF && sourceData && (type === "string" || type === "number" || type === "boolean")) {
       var samples = MF.getSampleValuesForPath(sourceData, path, 3);
       if (samples.length) {
-        sampleHint = h("span", { className: "tree-samples", title: "Sample values" }, " eg. " + samples.join(", "));
+        sampleHint = h("span", { className: "tree-samples", title: "Sample values across records" }, " eg. " + samples.join(", "));
+      }
+    }
+
+    var displayKey = nodeKey;
+    if (type === "array" || (nodeKey && /^\[\d+\]$/.test(nodeKey))) {
+      var idxMatch = nodeKey && nodeKey.match(/^\[(\d+)\]$/);
+      if (idxMatch) {
+        displayKey = arrayItemDisplayLabel(value, parseInt(idxMatch[1], 10));
       }
     }
 
     var children = [
       h("div", {
         className: "tree-node-content" + (isSelected ? " selected" : "") + (isExpandable ? "" : " tree-node-leaf"),
+        "data-depth": depth,
         onClick: handleClick,
-        style: { paddingLeft: (depth * 12 + 6) + "px" },
+        style: { paddingLeft: (depth * 14 + 6) + "px" },
       },
-        isExpandable ? h("span", { className: "tree-toggle" }, expanded ? "\u25BC" : "\u25B6") : h("span", { className: "tree-toggle" }),
+        isExpandable
+          ? h("span", { className: "tree-toggle", onClick: handleToggleClick }, expanded ? "\u25BC" : "\u25B6")
+          : h("span", { className: "tree-toggle" }),
         h("span", { className: "tree-label" },
-          nodeKey ? h("span", {
+          displayKey ? h("span", {
             className: "tree-key",
-            title: path && path !== nodeKey ? nodeKey + " — path: " + path : nodeKey,
-          }, nodeKey) : null,
-          h("span", { className: "tree-type " + type }, type)
+            title: path && path !== displayKey ? displayKey + " — path: " + path : displayKey,
+          }, displayKey) : null,
+          h("span", { className: "tree-type " + treeTypeBadgeClass(type), title: type }, treeTypeBadgeLabel(type))
         ),
         h("span", { className: "tree-value-wrap" }, renderValue(), sampleHint)
       )
     ];
 
     if (isExpandable && expanded) {
-      children.push(h("div", { className: "tree-children" },
+      children.push(h("div", { className: "tree-children", "data-depth": depth + 1 },
         type === "array" ? value.map(function (item, i) {
           return h(TreeNode, {
             key: "arr-" + i,
-            nodeKey: "[" + i + "]",
+            nodeKey: arrayItemDisplayLabel(item, i),
             value: item,
             path: path != null && path !== "" ? path + "." + i : String(i),
             onSelect: onSelect,
@@ -384,6 +535,7 @@
             searchQuery: searchQuery,
             sourceData: sourceData,
             depth: depth + 1,
+            expandControl: expandControl,
           });
         }) : Object.keys(value).map(function (k) {
           return h(TreeNode, {
@@ -396,6 +548,7 @@
             searchQuery: searchQuery,
             sourceData: sourceData,
             depth: depth + 1,
+            expandControl: expandControl,
           });
         })
       ));
@@ -406,18 +559,93 @@
 
   // ── Source Tree Panel ──────────────────────────────────────────────
 
+  function SourceBreadcrumb(props) {
+    var crumbs = props.crumbs || [];
+    var onNavigate = props.onNavigate;
+    if (!crumbs.length) {
+      return h("div", { className: "source-breadcrumb source-breadcrumb-empty" },
+        h("span", { className: "text-sm text-muted" }, "Select a node to see path and detail")
+      );
+    }
+    return h("div", { className: "source-breadcrumb" },
+      crumbs.map(function (crumb, i) {
+        return h(Fragment, { key: crumb.path },
+          i > 0 ? h("span", { className: "source-breadcrumb-sep" }, "\u203A") : null,
+          h("button", {
+            type: "button",
+            className: "source-breadcrumb-item" + (i === crumbs.length - 1 ? " is-current" : ""),
+            title: crumb.path,
+            onClick: function () { onNavigate(crumb.path); },
+          }, crumb.label)
+        );
+      })
+    );
+  }
+
+  function SourceDetailPane(props) {
+    var path = props.path;
+    var value = props.value;
+    var detailText = formatSourceDetailJson(value);
+
+    return h("div", { className: "source-detail" },
+      h("div", { className: "source-detail-header" },
+        h("span", { className: "source-detail-title" }, "Selection detail"),
+        h("div", { className: "source-detail-actions" },
+          path ? h("button", {
+            type: "button",
+            className: "btn btn-sm btn-secondary",
+            onClick: function () { copyToClipboard(path); },
+            title: "Copy dot path for mapping",
+          }, "Copy path") : null,
+          h("button", {
+            type: "button",
+            className: "btn btn-sm btn-secondary",
+            onClick: function () { copyToClipboard(detailText); },
+            disabled: value === undefined,
+          }, "Copy JSON")
+        )
+      ),
+      path ? h("div", { className: "source-detail-path font-mono text-sm", title: path }, path) : null,
+      h("pre", { className: "source-detail-json" }, value === undefined
+        ? "// Click a field in the tree to inspect its value"
+        : detailText)
+    );
+  }
+
   function SourceTreePanel(props) {
     var data = props.data;
     var onSelect = props.onSelect;
     var collapsed = props.collapsed;
     var onToggleCollapse = props.onToggleCollapse;
+    var panelStyle = props.panelStyle;
     var _useState = useState(""), searchQuery = _useState[0], setSearchQuery = _useState[1];
+    var _useState2 = useState({ version: 0, all: true }), expandControl = _useState2[0], setExpandControl = _useState2[1];
     var selectedPath = props.selectedPath;
 
-    var filteredData = data;
+    function expandAll() {
+      setExpandControl({ version: expandControl.version + 1, all: true });
+    }
+
+    function collapseAll() {
+      setExpandControl({ version: expandControl.version + 1, all: false });
+    }
+
+    function handleNavigate(path) {
+      if (!path || !onSelect) return;
+      var val = resolvePathInSourceData(data, path);
+      onSelect(path, val, getType(val));
+    }
+
+    var breadcrumbs = selectedPath ? pathToBreadcrumbs(data, selectedPath) : [];
+    var selectedValue = selectedPath != null && selectedPath !== ""
+      ? resolvePathInSourceData(data, selectedPath)
+      : undefined;
 
     if (!data) {
-      return h("div", { className: "panel panel-source" + (collapsed ? " panel-collapsed" : "") },
+      return h("div", {
+        className: "panel panel-source" + (collapsed ? " panel-collapsed" : ""),
+        style: panelStyle,
+      },
         h("div", { className: "panel-header" },
           h("span", { className: "panel-title" }, collapsed ? "" : "Source Data"),
           onToggleCollapse ? h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: onToggleCollapse }, collapsed ? "\u25B6" : "\u25C0") : null
@@ -432,46 +660,64 @@
       );
     }
 
-    return h("div", { className: "panel panel-source" + (collapsed ? " panel-collapsed" : "") },
+    return h("div", {
+      className: "panel panel-source" + (collapsed ? " panel-collapsed" : ""),
+      style: panelStyle,
+    },
       h("div", { className: "panel-header" },
         h("span", { className: "panel-title" }, collapsed ? "Src" : "Source Data"),
         collapsed ? null : h("span", { className: "text-sm text-muted" }, Array.isArray(data) ? data.length + " records" : "1 object"),
         onToggleCollapse ? h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: onToggleCollapse }, collapsed ? "\u25B6" : "\u25C0") : null
       ),
-      collapsed ? null : [
-      h("input", {
-        className: "tree-search",
-        type: "search",
-        placeholder: "Search fields...",
-        value: searchQuery,
-        onInput: function (e) { setSearchQuery(e.target.value); },
-      }),
-      h("div", { className: "panel-body tree" },
-        Array.isArray(filteredData) ? filteredData.map(function (record, i) {
-          return h(TreeNode, {
-            key: "record-" + i,
-            nodeKey: "Record " + (i + 1),
-            value: record,
-            path: String(i),
-            onSelect: onSelect,
-            selectedPath: selectedPath,
-            searchQuery: searchQuery,
-            sourceData: data,
-            depth: 0,
-          });
-        }) : h(TreeNode, {
-          key: "root",
-          nodeKey: "root",
-          value: filteredData,
-          path: null,
-          onSelect: onSelect,
-          selectedPath: selectedPath,
-          searchQuery: searchQuery,
-          sourceData: data,
-          depth: 0,
-        })
+      collapsed ? null : h("div", { className: "source-panel-body" },
+        h("div", { className: "source-toolbar" },
+          h("input", {
+            className: "tree-search",
+            type: "search",
+            placeholder: "Search keys & values…",
+            value: searchQuery,
+            onInput: function (e) { setSearchQuery(e.target.value); },
+          }),
+          h("div", { className: "source-toolbar-actions" },
+            h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: expandAll, title: "Expand all nodes" }, "Expand"),
+            h("button", { type: "button", className: "btn btn-sm btn-secondary", onClick: collapseAll, title: "Collapse all nodes" }, "Collapse")
+          )
+        ),
+        h(SourceBreadcrumb, { crumbs: breadcrumbs, onNavigate: handleNavigate }),
+        h("div", { className: "source-split" },
+          h("div", { className: "source-tree-scroll tree" },
+            Array.isArray(data) ? data.map(function (record, i) {
+              return h(TreeNode, {
+                key: "record-" + i,
+                nodeKey: "Record " + (i + 1),
+                value: record,
+                path: String(i),
+                onSelect: onSelect,
+                selectedPath: selectedPath,
+                searchQuery: searchQuery,
+                sourceData: data,
+                depth: 0,
+                expandControl: expandControl,
+              });
+            }) : h(TreeNode, {
+              key: "root",
+              nodeKey: "root",
+              value: data,
+              path: "",
+              onSelect: onSelect,
+              selectedPath: selectedPath,
+              searchQuery: searchQuery,
+              sourceData: data,
+              depth: 0,
+              expandControl: expandControl,
+            })
+          ),
+          h(SourceDetailPane, {
+            path: selectedPath,
+            value: selectedValue,
+          })
+        )
       )
-      ]
     );
   }
 
@@ -1344,12 +1590,20 @@
     var _useState17 = useState({ source: false, mapping: false, preview: false }), collapsedPanels = _useState17[0], setCollapsedPanels = _useState17[1];
     var _useState18 = useState([]), undoStack = _useState18[0], setUndoStack = _useState18[1];
     var _useState19 = useState([]), redoStack = _useState19[0], setRedoStack = _useState19[1];
+    var _useState20 = useState(function () {
+      try {
+        var w = localStorage.getItem("jt-source-width");
+        return w ? Math.min(600, Math.max(260, parseInt(w, 10))) : 360;
+      } catch (e) {
+        return 360;
+      }
+    }), sourcePanelWidth = _useState20[0], setSourcePanelWidth = _useState20[1];
     var computeWarningAck = useRef(false);
     var skipVisualCodeSyncRef = useRef(false);
     var codeSnapshotRef = useRef(null);
     var fileInputRef = useRef(null);
     var expectedInputRef = useRef(null);
-    var _useState20 = useState([]), importedFieldSummary = _useState20[0], setImportedFieldSummary = _useState20[1];
+    var _useState21 = useState([]), importedFieldSummary = _useState21[0], setImportedFieldSummary = _useState21[1];
 
     var mappingFieldSummary = useMemo(function () {
       if (!MF) return [];
@@ -1798,10 +2052,34 @@
     }
 
     // Tree node selection — copy dot-path to clipboard (FR-102)
-    function handleTreeSelect(path) {
-      if (!path) return;
+    function handleTreeSelect(path, value, type) {
+      if (path == null) return;
       setSelectedPath(path);
-      copyToClipboard(path);
+      if (path !== "") copyToClipboard(path);
+    }
+
+    function handleSourceResizeStart(e) {
+      e.preventDefault();
+      var startX = e.clientX;
+      var startW = sourcePanelWidth;
+      var currentW = startW;
+      function onMove(ev) {
+        currentW = Math.min(640, Math.max(260, startW + (ev.clientX - startX)));
+        setSourcePanelWidth(currentW);
+      }
+      function onUp() {
+        try {
+          localStorage.setItem("jt-source-width", String(currentW));
+        } catch (err) { /* ignore */ }
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     }
 
     function clearSavedData() {
@@ -2004,6 +2282,12 @@
           selectedPath: selectedPath,
           collapsed: collapsedPanels.source,
           onToggleCollapse: function () { togglePanel("source"); },
+          panelStyle: collapsedPanels.source ? undefined : { width: sourcePanelWidth, minWidth: sourcePanelWidth, maxWidth: sourcePanelWidth },
+        }),
+        collapsedPanels.source ? null : h("div", {
+          className: "resize-handle resize-handle-source",
+          onMouseDown: handleSourceResizeStart,
+          title: "Drag to resize source panel",
         }),
         h("div", { className: "panel panel-mapping" + (collapsedPanels.mapping ? " panel-collapsed" : "") },
           h("div", { className: "panel-header" },

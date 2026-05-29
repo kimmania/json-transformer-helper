@@ -169,6 +169,18 @@
     return new Function("return (" + String(text).trim() + ")")();
   }
 
+  function emptyMappingDocument(meta) {
+    var mapping = { fields: {} };
+    return MF ? MF.applyMappingMeta(mapping, meta || {}) : mapping;
+  }
+
+  function mappingToCodeText(mapping, mode) {
+    if (mode === "json") {
+      return JSON.stringify(mapping, null, 2);
+    }
+    return MF ? MF.formatMappingAsModule(mapping, true) : JSON.stringify(mapping, null, 2);
+  }
+
   function dataHasTopLevelField(data, fieldName) {
     if (!data || !fieldName) return false;
     var rows = Array.isArray(data) ? data : [data];
@@ -3720,11 +3732,15 @@
         } else if (mappingFields.length > 0) {
           var built = buildMappingFromVisual(mappingFields, passthrough, mappingMeta);
           skipVisualCodeSyncRef.current = true;
-          var builtText = mode === "json"
-            ? JSON.stringify(built, null, 2)
-            : MF.formatMappingAsModule(built, true);
+          var builtText = mappingToCodeText(built, mode);
           setCodeEditorValue(builtText);
           codeSnapshotRef.current = { text: builtText, mode: mode, mapping: built };
+        } else {
+          var emptyMapping = emptyMappingDocument(mappingMeta);
+          var emptyText = mappingToCodeText(emptyMapping, mode);
+          skipVisualCodeSyncRef.current = true;
+          setCodeEditorValue(emptyText);
+          codeSnapshotRef.current = { text: emptyText, mode: mode, mapping: emptyMapping };
         }
         setEditorMode(mode);
         return;
@@ -3732,9 +3748,11 @@
 
       if (mode === "json" && editorMode === "js") {
         try {
-          var fromJs = MF.applyMappingMeta(MF.parseMappingModule(codeEditorValue), mappingMeta);
+          var fromJs = !String(codeEditorValue).trim()
+            ? emptyMappingDocument(mappingMeta)
+            : MF.applyMappingMeta(MF.parseMappingModule(codeEditorValue), mappingMeta);
           skipVisualCodeSyncRef.current = true;
-          var jsonText = JSON.stringify(fromJs, null, 2);
+          var jsonText = mappingToCodeText(fromJs, "json");
           setCodeEditorValue(jsonText);
           codeSnapshotRef.current = { text: jsonText, mode: "json", mapping: fromJs };
         } catch (e) {
@@ -3743,9 +3761,11 @@
         }
       } else if (mode === "js" && editorMode === "json") {
         try {
-          var fromJson = MF.applyMappingMeta(JSON.parse(codeEditorValue), mappingMeta);
+          var fromJson = !String(codeEditorValue).trim()
+            ? emptyMappingDocument(mappingMeta)
+            : MF.applyMappingMeta(JSON.parse(codeEditorValue), mappingMeta);
           skipVisualCodeSyncRef.current = true;
-          var jsText = MF.formatMappingAsModule(fromJson, true);
+          var jsText = mappingToCodeText(fromJson, "js");
           setCodeEditorValue(jsText);
           codeSnapshotRef.current = { text: jsText, mode: "js", mapping: fromJson };
         } catch (e) {
